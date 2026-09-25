@@ -97,7 +97,7 @@ function idiomaSugerido(texto){
 
 /* URL del servidor (Cloudflare Worker). Si algún día lo redeploya en otra
    cuenta/nombre, cambiar solo esta línea. */
-const API_URL = (location.hostname==="localhost"||location.hostname==="127.0.0.1") ? "http://localhost:8787" : "https://mayor-stock-api.juanbautistacrespialomar.workers.dev";
+const API_URL = (location.hostname==="localhost"||location.hostname==="127.0.0.1") ? "http://localhost:8787" : "https://princecollections-api.teamquinoto.workers.dev";
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
 

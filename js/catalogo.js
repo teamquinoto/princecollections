@@ -10,7 +10,7 @@
    ============================================================ */
 const API_URL = (location.hostname==="localhost"||location.hostname==="127.0.0.1")
   ? "http://localhost:8787"
-  : "https://mayor-stock-api.juanbautistacrespialomar.workers.dev";   // misma que js/01-core.js
+  : "https://princecollections-api.teamquinoto.workers.dev";   // misma que js/01-core.js
 
 const LS_CART="gcat_cart_v1", LS_LANG="gcat_lang", LS_VIEW="gcat_view", LS_THEME="gcat_theme", LS_WHO="gcat_who";
 
