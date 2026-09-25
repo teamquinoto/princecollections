@@ -1,0 +1,31 @@
+{
+  "name": "Stock Manager",
+  "short_name": "Stock",
+  "description": "Gestor de stock: las compras suman, las ventas restan. Importá facturas en PDF y seguí cada movimiento, sincronizado entre dispositivos.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#05060a",
+  "theme_color": "#1b2430",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<!-- v100 · Tour de bienvenida (idioma + admin/vendedor) y guía "Cómo usar" (botón ? al pie del menú; el menú queda sólo para el ERP). v96 · Blindaje: el navegador sólo ejecuta código que venga de esta misma app (nada de afuera). -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://mayor-stock-api.juanbautistacrespialomar.workers.dev http://localhost:8787 http://127.0.0.1:8787; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#1b2430">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="favicon.png" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Gestor">
+<title>Stock Manager</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700;800;900&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="js/00a-tema.js"></script>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="guia.css">
+</head>
+<body>
+<div id="login" class="login-scrim" hidden>
+  <div class="login-aurora" aria-hidden="true"><span></span><span></span><span></span></div>
+  <div class="login-card">
+    <div class="login-logo-wrap"><img src="icon-512.png" alt="" class="login-logo" width="84" height="84"></div>
+    <h1>Stock Manager</h1>
+    <p class="login-sub" data-i18n="core.login.sub">Your inventory, synced across all your devices.</p>
+    <div class="field"><label for="loginUser" data-i18n="core.login.user">Username</label>
+      <input class="inp" id="loginUser" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="your username" data-i18n-ph="core.login.user.ph"></div>
+    <div class="field"><label for="loginPass" data-i18n="core.login.pass">Password</label>
+      <div class="pass-wrap">
+        <input class="inp" id="loginPass" type="password" autocomplete="current-password" placeholder="••••••••">
+        <button type="button" class="pass-toggle" id="loginPassToggle" aria-label="Show password" data-i18n-title="core.login.showpass" data-i18n-aria="core.login.showpass" title="Show password">
+          <svg class="eye-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
+          <svg class="eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+        </button>
+      </div>
+    </div>
+    <div id="loginErr" class="login-err"></div>
+    <button class="btn primary login-btn" id="loginBtn" data-i18n="core.login.signin">Sign in</button>
+    <p class="login-build">build v109</p>
+  </div>
+</div>
+<div class="topbar" id="topbar">
+  <div class="tb-brand">
+    <span class="tb-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/></svg>
+    </span>
+    <span class="tb-name">Stock Manager</span>
+  </div>
+  <div class="tb-right">
+    <span class="tb-sync" data-syncchip>●</span>
+    <div class="lang-switch" role="group" aria-label="Language" data-i18n-title="tb.lang" data-i18n-aria="lang.arialabel">
+      <button type="button" class="lang-opt" data-lang-set="en" title="English"><span class="lc">EN</span></button>
+      <button type="button" class="lang-opt" data-lang-set="es" title="Español"><span class="lc">ES</span></button>
+    </div>
+    <button class="theme-switch" data-theme-toggle aria-label="Toggle theme" data-i18n-title="tb.theme" data-i18n-aria="tb.theme" title="Toggle theme">
+      <span class="ts-track">
+        <span class="ts-hint ts-hint-sun"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></span>
+        <span class="ts-hint ts-hint-moon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></span>
+        <span class="ts-thumb"><span data-themeicon></span></span>
+      </span>
+    </button>
+  </div>
+</div>
+<div class="app">
+  <aside class="side">
+    <div class="brand">
+      <img src="icon-192.png" alt="" class="brand-logo" width="34" height="34">
+      <h1>Stock Manager</h1>
+    </div>
+    <nav class="nav" id="nav">
+      <div class="nav-group-title" data-i18n="sec.op">Operations</div>
+      <button data-view="dash" data-section="op" class="on"><span class="ico"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg></span><span data-i18n="nav.dash">Dashboard</span></button>
+      <button data-view="ventas" data-section="op"><span class="ico"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="20" r="1.4"/><circle cx="18" cy="20" r="1.4"/><path d="M2 3h2.2l2 12.4a1.6 1.6 0 0 0 1.6 1.3h9.1a1.6 1.6 0 0 0 1.6-1.2L21 8H6"/></svg></span><span data-i18n="nav.ventas">Sales</span></button>
+      <button data-view="compras" data-section="op" data-admin-only><span class="ico"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8"/><path d="M1.5 3.5h21v4.5h-21z"/><path d="M12 11v6.5M9 14.5l3 3 3-3"/></svg></span><span data-i18n="nav.compras">Purchases</span></button>
+      <button data-view="mov" data-section="op" data-admin-only><span class="ico"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4v16M7 4 3 8M7 4l4 4"/><path d="M17 20V4M17 20l4-4M17 20l-4-4"/></svg></span><span data-i18n="nav.mov">Movements</span></button>
+      <div class="nav-group-title" data-i18n="sec.cat">Catalog</div>
+      <button data-view="prod" data-section="cat"><span class="ico"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7 12 12l8.7-5M12 22V12"/></svg></span><span data-i18n="nav.prod">Products</span></button>
+      <button data-view="clientes" data-section="cat"><span class="ico"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9.5" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/></svg></span><span data-i18n="nav.clientes">Customers</span></button>
+      <div class="nav-group-title" data-admin-only data-i18n="sec.fin">Finance</div>
+      <button data-view="resumen" data-section="fin" data-admin-only><span class="ico"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 13a9 9 0 0 1 18 0"/><path d="M12 13l4-4"/><path d="M5 19h14"/></svg></span><span data-i18n="nav.resumen">Overview</span></button>
+      <button data-view="analisis" data-section="fin" data-admin-only><span class="ico"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l3-4 3 2 4-6"/></svg></span><span data-i18n="nav.analisis">Analysis</span></button>
+      <button data-view="pnl" data-section="fin" data-admin-only><span class="ico"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8.5 17l2.5-3 2 1.5L16 11"/></svg></span><span data-i18n="nav.pnl">P&amp;L</span></button>
+      <button data-view="gastos" data-section="fin" data-admin-only><span class="ico"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21h18"/><path d="M5 21V8l7-5 7 5v13"/><path d="M9 21v-6h6v6"/></svg></span><span data-i18n="nav.gastos">Operating expenses</span></button>
+      <button data-view="plan" data-section="fin" data-admin-only><span class="ico"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg></span><span data-i18n="nav.plan">Plan vs actual</span></button>
+      <button data-view="inv" data-section="fin" data-admin-only><span class="ico"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12l4 6-10 12L2 9z"/><path d="M2 9h20M12 21 8 9l4-6 4 6-4 12"/></svg></span><span data-i18n="nav.inv">Investments</span></button>
+      <div class="nav-group-title" data-admin-only data-i18n="sec.dat">Config</div>
+      <button data-view="datos" data-section="dat" data-admin-only><span class="ico"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3M8 11l4 4 4-4"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg></span><span data-i18n="nav.datos">Data</span></button>
+      <button data-view="usuarios" data-section="dat" data-admin-only><span class="ico"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M5.5 21a6.5 6.5 0 0 1 13 0"/></svg></span><span data-i18n="nav.usuarios">Users</span></button>
+    </nav>
+    <div class="foot">
+      <div class="side-actions">
+        <button class="side-btn" data-open-guide aria-label="How to use" data-i18n-title="nav.guia" data-i18n-aria="nav.guia" title="How to use">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.5-3 4.5M12 17.5h.01"/></svg>
+        </button>
+        <button class="side-btn" data-syncside data-syncicon aria-label="Sync" data-i18n-title="tb.sync" data-i18n-aria="tb.sync" title="Sync">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/>
+            <path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/>
+          </svg>
+        </button>
+        <button class="side-btn is-logout" data-logout-side aria-label="Sign out" data-i18n-title="tb.logout" data-i18n-aria="tb.logout" title="Sign out">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </aside>
+
+  <div class="mobtop" id="navMob">
+    <img src="icon-192.png" alt="" class="brand-m-logo" width="24" height="24">
+    <button data-view="dash" data-section="op" class="on" data-i18n="nav.dash">Dashboard</button>
+    <button data-view="resumen" data-section="fin" data-admin-only data-i18n="nav.resumen">Overview</button>
+    <button data-view="analisis" data-section="fin" data-admin-only data-i18n="nav.analisis">Analysis</button>
+    <button data-view="pnl" data-section="fin" data-admin-only data-i18n="nav.pnl">P&amp;L</button>
+    <button data-view="gastos" data-section="fin" data-admin-only data-i18n="nav.gastos.short">Opex</button>
+    <button data-view="plan" data-section="fin" data-admin-only data-i18n="nav.plan">Plan vs actual</button>
+    <button data-view="prod" data-section="cat" data-i18n="nav.prod">Products</button>
+    <button data-view="compras" data-section="op" data-admin-only data-i18n="nav.compras">Purchases</button>
+    <button data-view="ventas" data-section="op" data-i18n="nav.ventas">Sales</button>
+    <button data-view="clientes" data-section="cat" data-i18n="nav.clientes.short">Cust.</button>
+    <button data-view="mov" data-section="op" data-admin-only data-i18n="nav.mov.short">Movem.</button>
+    <button data-view="inv" data-section="fin" data-admin-only data-i18n="nav.inv">Investments</button>
+    <button data-view="datos" data-section="dat" data-admin-only data-i18n="nav.datos">Data</button>
+    <button data-view="usuarios" data-section="dat" data-admin-only data-i18n="nav.usuarios">Users</button>
+    <button type="button" class="mob-help" data-open-guide aria-label="How to use" data-i18n-title="nav.guia" data-i18n-aria="nav.guia" title="How to use"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.5-3 4.5M12 17.5h.01"/></svg></button>
+    <span class="mob-role" data-rolebadge style="align-self:center;margin-left:auto;font-size:10.5px;font-weight:800;letter-spacing:.4px;white-space:nowrap;padding:3px 8px;border-radius:999px;text-transform:uppercase"></span>
+    <span data-syncchip style="align-self:center;font-size:11.5px;font-weight:700;white-space:nowrap;padding-left:8px">●</span>
+    <div class="lang-switch mob-lang" role="group" aria-label="Language" data-i18n-title="tb.lang" data-i18n-aria="lang.arialabel" style="align-self:center;margin-left:8px">
+      <button type="button" class="lang-opt" data-lang-set="en" title="English"><span class="lc">EN</span></button>
+      <button type="button" class="lang-opt" data-lang-set="es" title="Español"><span class="lc">ES</span></button>
+    </div>
+    <button class="theme-switch mob-theme" data-theme-toggle aria-label="Toggle theme" data-i18n-title="tb.theme" data-i18n-aria="tb.theme" title="Toggle theme" style="align-self:center;margin-left:8px">
+      <span class="ts-track">
+        <span class="ts-hint ts-hint-sun"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></span>
+        <span class="ts-hint ts-hint-moon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></span>
+        <span class="ts-thumb"><span data-themeicon></span></span>
+      </span>
+    </button>
+    <button class="mob-logout" data-logout-side aria-label="Sign out" data-i18n-title="tb.logout" data-i18n-aria="tb.logout" title="Sign out" style="align-self:center;margin-left:6px;background:none;border:0;color:var(--nav-ink);padding:6px;border-radius:6px">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+    </button>
+  </div>
+
+  <!-- v94 · Navegación mobile: tab bar inferior (zona del pulgar) + botón flotante + hoja "Más" -->
+  <nav class="tabbar" id="tabbar" data-i18n-aria="nav.main" aria-label="Main navigation">
+    <button type="button" class="tab" data-view="dash"><svg class="i" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg><span data-i18n="nav.dash"></span></button>
+    <button type="button" class="tab" data-view="ventas"><svg class="i" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="20" r="1.4"/><circle cx="18" cy="20" r="1.4"/><path d="M2 3h2.2l2 12.4a1.6 1.6 0 0 0 1.6 1.3h9.1a1.6 1.6 0 0 0 1.6-1.2L21 8H6"/></svg><span data-i18n="nav.ventas"></span></button>
+    <button type="button" class="tab" data-view="prod"><svg class="i" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7 12 12l8.7-5M12 22V12"/></svg><span data-i18n="nav.prod"></span></button>
+    <button type="button" class="tab" data-view="clientes"><svg class="i" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9.5" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/></svg><span data-i18n="nav.clientes"></span></button>
+    <button type="button" class="tab" id="tabMore" aria-haspopup="dialog" aria-expanded="false" aria-controls="moreSheet"><svg class="i" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></svg><span data-i18n="nav.more">More</span></button>
+  </nav>
+  <button type="button" class="fab" id="fabVenta"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span data-i18n="dash.newsale">New sale</span></button>
+  <div class="ms-scrim" id="moreScrim" hidden></div>
+  <div class="more-sheet" id="moreSheet" role="dialog" aria-modal="true" aria-labelledby="moreTitle" hidden>
+    <div class="ms-grip" aria-hidden="true"></div>
+    <h2 class="ms-title" id="moreTitle" data-i18n="nav.more.title">More sections</h2>
+    <div class="ms-group" data-admin-only><div class="ms-gtitle" data-i18n="sec.op"></div><div class="ms-grid">
+        <button type="button" class="ms-item" data-view="compras" data-admin-only><svg class="i" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8"/><path d="M1.5 3.5h21v4.5h-21z"/><path d="M12 11v6.5M9 14.5l3 3 3-3"/></svg><span data-i18n="nav.compras"></span></button>
+        <button type="button" class="ms-item" data-view="mov" data-admin-only><svg class="i" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4v16M7 4 3 8M7 4l4 4"/><path d="M17 20V4M17 20l4-4M17 20l-4-4"/></svg><span data-i18n="nav.mov"></span></button>
+    </div></div>
+    <div class="ms-group" data-admin-only><div class="ms-gtitle" data-i18n="sec.fin"></div><div class="ms-grid">
+        <button type="button" class="ms-item" data-view="resumen" data-admin-only><svg class="i" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 13a9 9 0 0 1 18 0"/><path d="M12 13l4-4"/><path d="M5 19h14"/></svg><span data-i18n="nav.resumen"></span></button>
+        <button type="button" class="ms-item" data-view="analisis" data-admin-only><svg class="i" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l3-4 3 2 4-6"/></svg><span data-i18n="nav.analisis"></span></button>
+        <button type="button" class="ms-item" data-view="pnl" data-admin-only><svg class="i" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8.5 17l2.5-3 2 1.5L16 11"/></svg><span data-i18n="nav.pnl"></span></button>
+        <button type="button" class="ms-item" data-view="gastos" data-admin-only><svg class="i" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21h18"/><path d="M5 21V8l7-5 7 5v13"/><path d="M9 21v-6h6v6"/></svg><span data-i18n="nav.gastos"></span></button>
+        <button type="button" class="ms-item" data-view="plan" data-admin-only><svg class="i" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg><span data-i18n="nav.plan"></span></button>
+        <button type="button" class="ms-item" data-view="inv" data-admin-only><svg class="i" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12l4 6-10 12L2 9z"/><path d="M2 9h20M12 21 8 9l4-6 4 6-4 12"/></svg><span data-i18n="nav.inv"></span></button>
+    </div></div>
+    <div class="ms-group" data-admin-only><div class="ms-gtitle" data-i18n="sec.dat"></div><div class="ms-grid">
+        <button type="button" class="ms-item" data-view="datos" data-admin-only><svg class="i" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3M8 11l4 4 4-4"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg><span data-i18n="nav.datos"></span></button>
+        <button type="button" class="ms-item" data-view="usuarios" data-admin-only><svg class="i" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M5.5 21a6.5 6.5 0 0 1 13 0"/></svg><span data-i18n="nav.usuarios"></span></button>
+    </div></div>
+    <div class="ms-group"><div class="ms-gtitle" data-i18n="nav.prefs">Preferences</div>
+      <div class="ms-row"><span data-i18n="nav.lang">Language</span>
+        <div class="lang-switch" role="group" data-i18n-aria="lang.arialabel" aria-label="Language"><button type="button" class="lang-opt" data-lang-set="en"><span class="lc">EN</span></button><button type="button" class="lang-opt" data-lang-set="es"><span class="lc">ES</span></button></div></div>
+      <div class="ms-row"><span data-i18n="nav.theme">Dark mode</span>
+        <button class="theme-switch" data-theme-toggle data-i18n-aria="tb.theme" aria-label="Toggle theme"><span class="ts-track">
+        <span class="ts-hint ts-hint-sun"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></span>
+        <span class="ts-hint ts-hint-moon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></span>
+        <span class="ts-thumb"><span data-themeicon></span></span>
+      </span></button></div>
+      <div class="ms-actions">
+        <button type="button" class="btn" data-syncside><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></svg><span data-i18n="tb.sync">Sync</span></button>
+        <button type="button" class="btn danger" data-logout-side><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg><span data-i18n="tb.logout">Sign out</span></button>
+      </div>
+    </div>
+  </div>
+
+  <main class="main" id="main"></main>
+</div>
+
+<div id="modalRoot"></div>
+<div id="toasts" aria-live="polite"></div>
+
+<!-- Librerías guardadas DENTRO de la app (carpeta vendor), ya no se bajan de internet -->
+<script src="vendor/pdf.min.js"></script>
+<script src="vendor/jspdf.umd.min.js"></script>
+<script src="vendor/xlsx.full.min.js"></script>
+<script src="js/00b-i18n.js"></script>
+<script src="js/00d-i18n-fin.js"></script>
+<script src="js/00e-i18n-guia.js"></script>
+<script src="js/00c-icons.js"></script>
+<script src="js/09-compat-select.js"></script>
+<script src="js/07-paises.js"></script>
+<script src="js/01-core.js"></script>
+<script src="js/02-engine.js"></script>
+<script src="js/05-metrics.js"></script>
+<script src="js/06-fpa.js"></script>
+<script src="js/03-router.js"></script>
+<script src="js/10-view-dashboard.js"></script>
+<script src="js/11-view-analisis.js"></script>
+<script src="js/11b-view-pnl.js"></script>
+<script src="js/11c-view-resumen.js"></script>
+<script src="js/11d-view-plan.js"></script>
+<script src="js/11f-view-gastos.js"></script>
+<script src="js/11e-drill.js"></script>
+<script src="js/12-view-investments.js"></script>
+<script src="js/13-view-productos.js"></script>
+<script src="js/14-view-documentos.js"></script>
+<script src="js/15-view-movimientos.js"></script>
+<script src="js/16-view-datos.js"></script>
+<script src="js/20-modal-producto.js"></script>
+<script src="js/21-modal-documento.js"></script>
+<script src="js/17-view-clientes.js"></script>
+<script src="js/30-pdf.js"></script>
+<script src="js/31-export-pnl.js"></script>
+<script src="js/31b-export-pnl-pro.js"></script>
+<script src="js/32-importar-pdf.js"></script>
+<script src="js/33-ficha-producto.js"></script>
+<script src="js/34-datos-io.js"></script>
+<script src="js/18-papelera.js"></script>
+<script src="js/19-view-guia.js"></script>
+<script src="js/22-ui-modales.js"></script>
+<script src="js/40-field-enhancers.js"></script>
+<script src="js/41-mobile-nav.js"></script>
+<script src="js/42-moneda.js"></script>
+<script src="vendor/qrcode.js"></script>
+<script src="js/43-seguridad.js"></script>
+<script src="js/91-onboarding.js"></script>
+<script src="js/90-boot.js"></script>
+</body>
+</html>
