@@ -1,0 +1,20 @@
+CARPETA vendor — librerías que la app antes bajaba de internet
+================================================================
+Desde la v96 viven DENTRO de la app. Así el navegador puede bloquear
+cualquier código que venga de afuera (blindaje).
+
+Ya incluidas (versiones oficiales, bajadas de npm):
+  pdf.min.js / pdf.worker.min.js  -> pdf.js 3.11.174 (leer facturas PDF)
+  jspdf.umd.min.js                -> jsPDF 2.5.1 (generar facturas PDF)
+  exceljs.min.js                  -> ExcelJS 4.4.0 (Excel del P&L)
+
+FALTA UNA (la tenés que bajar vos, 1 minuto):
+  xlsx.full.min.js                -> SheetJS 0.20.3 (plan de ventas y Excels)
+
+  1) Abrí este link en el navegador:
+     https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js
+  2) Clic derecho -> "Guardar como..." -> guardalo en ESTA carpeta (vendor)
+     con el nombre exacto: xlsx.full.min.js
+
+  Por qué no viene en el zip: la versión nueva (que arregla dos fallas de
+  seguridad de la vieja 0.18.5) sólo se publica en el sitio oficial de SheetJS.
