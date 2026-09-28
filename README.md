@@ -43,7 +43,7 @@ Dos roles, más el **modo Local** (sin login = acceso total):
 
 - Los **vendedores son personas** (Teo, Tonio), **no sociedades** — se gestionan en **Data → Sellers**.
 - En el listado de ventas (admin) la columna **"Sold by"** muestra quién vendió cada factura (punto 6).
-- El control de permisos es **a nivel UI**: todos comparten el mismo token e inventario (`space: "main"`). Es suficiente para un equipo chico de confianza; no es un control criptográfico por usuario.
+- Los permisos los controla **el servidor**, no solo la pantalla: cada usuario tiene su propia sesión, el rol se revalida contra la base en cada pedido, y un vendedor no puede guardar nada que no sea suyo aunque toque el código de la app. Con `SELLER_VIEW=filtrada` el vendedor además **ni recibe** costos, compras, gastos ni ventas ajenas. Ver **[Seguridad](#seguridad-v108v114)**.
 
 ## Fechas
 
@@ -105,7 +105,10 @@ Link libre, **sin login y de solo lectura**, para que los clientes vean el stock
 | `manifest.json` | Metadatos PWA para instalación. |
 | `sw.js` | Service worker: cachea la app y pdf.js para uso offline. |
 | `catalogo.html` | Catálogo público de stock (sin login, sin precios) con armado de pedido. |
-| `worker.js` | Backend opcional (Cloudflare Worker): login + API de estado con control de `rev`. |
+| `worker.js` | Backend (Cloudflare Worker v4): login con 2FA, sesión por cookie, permisos por rol, vista recortada del vendedor y API de estado con control de `rev`. |
+| `js/43-seguridad.js` | Paso 2 del login (código 2FA) y panel "Verificación en dos pasos" en Usuarios. |
+| `vendor/` | Librerías de terceros (xlsx, jspdf, pdf.js, ExcelJS, qrcode). Se cargan **a demanda**, no al abrir. |
+| `CNAME` | Le dice a GitHub Pages que la app vive en `app.princecollectionstcg.com`. No borrar. |
 | `icon-192.png`, `icon-512.png`, `icon-maskable-512.png` | Íconos de la PWA. |
 | `apple-touch-icon.png` | Ícono para "Agregar a inicio" en iOS. |
 | `favicon.png`, `favicon-32.png` | Favicons. |
@@ -151,24 +154,43 @@ Por defecto todo vive en `localStorage` (modo **Local**, offline). Para tener **
 
 | Método | Ruta | Qué hace |
 |---|---|---|
-| `POST` | `/login` `{user, pass}` | Valida el usuario y devuelve `{token, space, role, vendedorId, name}`. |
+| `POST` | `/login` `{user, pass}` | Valida el usuario. Si tiene 2FA devuelve `{need2fa, ticket}`; si no, abre la sesión (cookie `gs_sess` con `COOKIE_MODE=1`, o `{token}` sin ella). |
+| `POST` | `/login/2fa` `{ticket, code}` | Paso 2 del login: código de 6 dígitos de la app autenticadora o código de recuperación. |
+| `POST` | `/logout` | Borra la cookie de sesión. |
+| `GET/POST` | `/2fa`, `/2fa/setup`, `/2fa/activar`, `/2fa/desactivar` | Estado, alta (contraseña → QR → código) y baja del 2FA del propio usuario. |
 | `POST` | `/parse-invoice` `{pdf, mime}` | OCR de una factura de compra con Gemini (requiere Bearer y `GEMINI_KEY`). |
-| `GET` | `/state?space=…` | Lee el estado (requiere `Authorization: Bearer <token>`). |
+| `GET` | `/state?space=…` | Lee el estado (requiere sesión: cookie o `Authorization: Bearer`). A un vendedor, con `SELLER_VIEW=filtrada`, le llega recortado. |
 | `PUT` | `/state?space=…` | Guarda con control de `rev`; si cambió en el servidor, responde **409 Conflicto**. |
 
-### Secrets necesarios
+### Secrets y variables
+
+**Secrets** (cifrados; se cargan en Cloudflare → Worker → Configuración → Variables y secretos, tipo *Secreto*):
 
 | Secret | Para qué |
 |---|---|
-| `AUTH_SECRET` | Clave para firmar los tokens de sesión (HMAC-SHA256, vencen a los 30 días). **Obligatorio.** |
-| `ADMIN_USER` / `ADMIN_PASS` | Login de respaldo del admin (sigue funcionando aunque no haya usuarios en D1). |
-| `USERS` *(opcional)* | JSON de usuarios de respaldo (ver abajo). Los usuarios nuevos se crean desde la app (**Usuarios**) y quedan en D1 con contraseña hasheada (PBKDF2). |
+| `AUTH_SECRET` | Clave para firmar las sesiones (HMAC-SHA256, vencen a los 30 días). **Obligatorio.** Si se cambia, se cierran todas las sesiones. |
+| `TOTP_KEY` | Clave con la que se guardan cifrados los secretos del 2FA. **Si se cambia, hay que reactivar el 2FA de todos.** |
+| `ADMIN_USER` / `ADMIN_PASS` | Login de respaldo ("llave maestra"). **Hoy apagado** con `SECRET_LOGIN=off`. |
+| `USERS` *(viejo, no usar)* | JSON de usuarios de respaldo. Reemplazado por los usuarios de la app (**Usuarios**, en D1 con contraseña hasheada PBKDF2). |
 | `GEMINI_KEY` *(opcional)* | Key de Google AI para el OCR de facturas (`/parse-invoice`). |
-| `ALLOWED_ORIGINS` *(opcional)* | Orígenes permitidos para CORS, separados por coma (p. ej. la URL de GitHub Pages). |
+
+**Variables** (texto visible; tipo *Texto*). Son interruptores: si una falla, se borra y todo vuelve a como estaba al instante.
+
+| Variable | Valor en producción | Qué hace |
+|---|---|---|
+| `ALLOWED_ORIGINS` | `https://app.princecollectionstcg.com` | Páginas autorizadas a hablar con el servidor. Con cookie, además es el control anti-CSRF. **Sin esta variable la app no conecta.** |
+| `COOKIE_MODE` | `1` | La sesión viaja en cookie HttpOnly (el código de la página no la puede leer). |
+| `SELLER_VIEW` | `filtrada` | Los vendedores no reciben costos, compras, gastos, plan ni ventas ajenas. |
+| `SECRET_LOGIN` | `off` | Apaga el login de respaldo (`ADMIN_USER`/`ADMIN_PASS`/`USERS`), que no pide 2FA ni se puede revocar. |
+| `TOTP_ISSUER` | `Prince Collections` | Nombre que se ve en la app autenticadora del celu. |
+
+> ⚠️ **Actualizar el Worker siempre desde Cloudflare** (Worker → *Editar código* → pegar → *Deploy*). Si alguna vez se sube con `wrangler deploy` desde la compu, `wrangler` **borra las variables que no estén en el `wrangler.toml`**: hay que copiarlas antes a su sección `[vars]` (Cloudflare muestra el bloque listo en un cartel amarillo).
 
 ### Vendedores (perfiles Teo/Tonio)
 
-Los **vendedores son personas, no sociedades**. Para que Teo y Tonio inicien sesión en su propio celu, definí el secret `USERS` como un JSON. Cada seller lleva un `id` que debe **coincidir** con el id del vendedor en **Data → Sellers** (ahí se le atribuye la comisión):
+> **Hoy los usuarios se crean desde la app (Usuarios).** El JSON de abajo es el método viejo; con `SECRET_LOGIN=off` ya no funciona. Si quedara algún usuario así, en **Usuarios** figura como "Sin usuario en la app" y se pasa con **"Pasar a usuario de la app"**.
+
+Los **vendedores son personas, no sociedades**. Método viejo: definir el secret `USERS` como un JSON. Cada seller lleva un `id` que debe **coincidir** con el id del vendedor en **Data → Sellers** (ahí se le atribuye la comisión):
 
 ```json
 [
@@ -180,7 +202,7 @@ Los **vendedores son personas, no sociedades**. Para que Teo y Tonio inicien ses
 
 - `role: "admin"` → acceso total (compras, inversión, análisis, ve comisiones de todos).
 - `role: "seller"` → vende desde el pool unificado; cada venta queda a su nombre; **no** carga compras ni manda a inversión, y sólo ve **sus** ventas.
-- Todos comparten el mismo token e inventario (`space: "main"`): **el stock es uno solo**. Los permisos se aplican a nivel UI.
+- Todos comparten el mismo inventario (`space: "main"`): **el stock es uno solo**. Cada uno tiene su propia sesión y el servidor aplica los permisos.
 
 ### `wrangler.toml` mínimo
 
@@ -207,25 +229,68 @@ wrangler login
 wrangler d1 create mayor-stock
 
 # 2) Definir los secrets (uno por comando, te los pide interactivo)
-wrangler secret put TOKEN
-wrangler secret put ADMIN_USER
-wrangler secret put ADMIN_PASS
-wrangler secret put USERS         # opcional: vendedores Teo/Tonio (JSON)
+wrangler secret put AUTH_SECRET   # obligatorio: firma de sesiones
+wrangler secret put TOTP_KEY      # recomendado: cifrado del 2FA
 wrangler secret put GEMINI_KEY    # opcional: OCR de facturas
+# (ADMIN_USER / ADMIN_PASS / USERS ya no hacen falta: los usuarios se crean en la app)
 
-# 3) Publicar
+# 3) Publicar (SOLO la primera vez; después, actualizar desde Cloudflare → Editar código,
+#    o copiar antes las variables al [vars] del wrangler.toml — ver "Secrets y variables")
 wrangler deploy
 ```
 
-Te queda una URL tipo `https://mayor-stock-api.TU-USUARIO.workers.dev`. Esa URL va en la constante `API_URL` del `index.html`:
+En producción el servidor vive en **`https://api.princecollectionstcg.com`** (dominio propio, ver [Seguridad](#seguridad-v108v114)). Esa URL va en la constante `API_URL` de `js/01-core.js` **y** de `js/catalogo.js`, y en el `connect-src` de la CSP de `index.html` y `catalogo.html`:
 
 ```js
-const API_URL = "https://mayor-stock-api.TU-USUARIO.workers.dev";
+const API_URL = "https://api.princecollectionstcg.com";
 ```
 
 ### Entrar
 
-Abrís la app, cargás **usuario y contraseña** (los `ADMIN_USER`/`ADMIN_PASS`) y listo: el primer dispositivo sube su estado, los demás lo traen. La sesión (usuario, token y espacio) queda guardada en `localStorage`.
+Abrís la app, cargás **usuario y contraseña** (un usuario creado en **Usuarios**) y, si tiene 2FA, el código del celu. La sesión queda en una **cookie HttpOnly** que la app no puede leer; en `localStorage` solo quedan datos no secretos (usuario, rol, `cookie: true`).
+
+---
+
+## Seguridad (v108–v114)
+
+### Cómo está armado hoy
+
+| Capa | Qué hace | Dónde |
+|---|---|---|
+| **Dominio propio** | App en `app.princecollectionstcg.com` (GitHub Pages) y servidor en `api.princecollectionstcg.com` (Worker). Al ser el mismo dominio, se puede usar cookie segura y firewall. La dirección vieja `*.workers.dev` está **apagada**. | Cloudflare (DNS) + GitHub Pages |
+| **Sesión por cookie** | La "llave" de la sesión va en cookie `HttpOnly; Secure; SameSite=Strict`: un script malicioso no la puede robar, solo viaja por HTTPS y otra página no la puede usar. En pedidos que modifican algo, el servidor además exige que el `Origin` esté en `ALLOWED_ORIGINS` (anti-CSRF). | `COOKIE_MODE=1` + `API_COOKIE = true` en `js/01-core.js` |
+| **2FA (TOTP)** | Opcional por usuario, con app autenticadora (Google Authenticator, 1Password…). Login en 2 pasos: contraseña → *ticket* de 5 minutos → código de 6 dígitos. 8 códigos de recuperación de un solo uso. El mismo código no se puede usar dos veces. El secreto se guarda cifrado (AES-GCM). Al activarlo se cierran las demás sesiones. | Usuarios → "Verificación en dos pasos" |
+| **Rate limit en el servidor** | 5 errores por usuario o 20 por IP → 15 minutos de bloqueo. Lo mismo para códigos 2FA. Contador atómico (no se cuelan intentos en paralelo). | `worker.js` |
+| **Firewall de Cloudflare** | Regla "Freno login": más de 5 pedidos a `/login` o `/login/2fa` en 10 s desde la misma IP → bloqueo. Corta ráfagas antes de que lleguen al servidor. | Cloudflare → dominio → Seguridad → Reglas de limitación de tasa |
+| **Permisos en el servidor** | El rol sale de la base en cada pedido (no del celu). Un vendedor solo puede guardar **sus** ventas y altas/cambios de clientes; costos, stock, FIFO y número de factura los calcula el servidor. | `rebaseVendedor()` en `worker.js` |
+| **Vista recortada del vendedor** | El servidor le manda al vendedor solo stock, productos **sin costos**, clientes, **sus** ventas y el tránsito sin precios. Un celu que tenía esa vista y pasa a admin no puede pisar la base completa (candado `_vista`). | `SELLER_VIEW=filtrada` |
+| **Sin llave maestra** | El login de respaldo del secret (no pide 2FA, no se revoca) está apagado. | `SECRET_LOGIN=off` |
+| **CSP estricta** | La app solo ejecuta scripts propios y solo se conecta a `api.princecollectionstcg.com`. | `<meta http-equiv="Content-Security-Policy">` en `index.html` y `catalogo.html` |
+
+### Emergencias
+
+- **Un usuario perdió el celu (2FA):** un admin abre su tarjeta en **Usuarios** → **Resetear 2FA** (también le cierra las sesiones). Lo vuelve a activar él.
+- **El admin perdió el celu:** en el login, en vez del código, escribe un **código de recuperación** (`xxxx-xxxx`).
+- **El admin perdió celu y códigos:** Cloudflare → D1 → base de producción → *Console*:
+  ```sql
+  UPDATE usuarios SET totp_on=0, totp_secret=NULL, totp_pend=NULL, totp_recup=NULL, totp_ult=0 WHERE user='USUARIO';
+  ```
+- **"Demasiados intentos":** esperar 15 minutos (se destraba solo).
+- **El código 2FA nunca anda:** la hora del celu tiene que estar en automático.
+- **Algo raro tras prender un interruptor:** borrar esa variable en Cloudflare → vuelve al instante.
+- **Entra y enseguida te echa (con cookie):** casi siempre es otra pestaña o la app instalada corriendo una versión vieja que habla con otra dirección del servidor: cerrar todas, abrir una sola y actualizar.
+
+### Dominio y DNS
+
+- El dominio `princecollectionstcg.com` es del cliente y se **paga en Hostinger**, pero su DNS (la "agenda") lo maneja **Cloudflare** (nameservers `bob.ns.cloudflare.com` / `lorna.ns.cloudflare.com`). Los registros se editan en Cloudflare → dominio → DNS.
+- `app` → CNAME a `teamquinoto.github.io` con **nube gris** (DNS only): GitHub necesita ver el tráfico directo para su certificado. `www` y el dominio raíz (página de Hostinger) también en gris.
+- **Mail del cliente (Google):** registro MX `SMTP.GOOGLE.COM` + TXT de verificación de Google. No tocarlos.
+- `api` lo administra el Worker (Worker → Dominios → dominio personalizado); no se edita a mano en DNS.
+- Para volver el DNS a Hostinger (emergencia): en Hostinger poner de nuevo `atlas.dns-parking.com` y `hyperion.dns-parking.com` (el Worker en `api.` dejaría de responder).
+
+### Pendiente (solo si se abre registro público)
+
+Verificación de email al crear cuenta y recuperación de contraseña por mail. Hoy no aplica: los usuarios los crea el admin.
 
 ---
 
@@ -236,7 +301,7 @@ Abrís la app, cargás **usuario y contraseña** (los `ADMIN_USER`/`ADMIN_PASS`)
 - Con `space` podés tener **inventarios separados** en el mismo servidor (`main`, `us`, `europa`, etc.).
 - El indicador de estado (**Local / Sincronizado / Guardando / Sin conexión / Conflicto**) está en la barra superior y lateral.
 
-> El `token` viaja en el header `Authorization: Bearer`. Al ser un secreto compartido, tratá la URL + credenciales como una contraseña.
+> La sesión viaja en una cookie `HttpOnly; Secure; SameSite=Strict` (con `COOKIE_MODE=1`). El servidor todavía acepta `Authorization: Bearer` para sesiones viejas y para pruebas locales.
 
 ### Respaldo extra
 
@@ -248,5 +313,5 @@ Aun con servidor, **Datos → Exportar JSON** te da una copia puntual. **Importa
 
 - **Sin dependencias de build.** Un solo HTML, service worker y (opcional) un Worker. Fácil de auditar y de deployar en Pages.
 - **`localStorage` como fuente local** + backend como espejo sincronizado, no al revés: la app nunca depende de estar online.
-- **pdf.js** por CDN (cacheado por el SW) solo para el import de facturas.
+- **Librerías pesadas a demanda (v114):** Excel (`xlsx`), PDF (`jspdf`), lector de PDF (`pdf.js`) y QR (`qrcode`) — ~1,6 MB — **no** se cargan al abrir. `libCargar()` / `libFalta()` en `js/01-core.js` las bajan la primera vez que un botón las necesita, y el service worker las guarda para las siguientes (también offline). ExcelJS (P&L "pro") ya se cargaba así desde v96. **Si agregás un uso nuevo de estas librerías, empezá la función con `if(libFalta("xlsx", ()=> miFuncion(args))) return;`.**
 - **Temas claro/oscuro** con `prefers-color-scheme` y override manual persistido.
