@@ -1,8 +1,40 @@
 /* ============================================================
    Gestor de Stock — vanilla, último costo, sincronizado
    ============================================================ */
-if (window.pdfjsLib) {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = "vendor/pdf.worker.min.js";   // v96: local (antes CDN)
+/* v114 · Librerías pesadas A DEMANDA.
+   Excel (xlsx), PDF (jspdf), lector de PDF (pdf.js) y QR suman ~1,6 MB y antes
+   se cargaban TODAS cada vez que se abría la app, aunque se usan de vez en cuando.
+   Ahora se bajan la primera vez que hacen falta (y el service worker las guarda
+   para las siguientes, también sin internet). */
+const LIBS = {
+  xlsx:   { src:"vendor/xlsx.full.min.js",  ok:()=> !!window.XLSX },
+  jspdf:  { src:"vendor/jspdf.umd.min.js",  ok:()=> !!(window.jspdf && window.jspdf.jsPDF) },
+  pdfjs:  { src:"vendor/pdf.min.js",        ok:()=> !!window.pdfjsLib,
+            despues:()=>{ pdfjsLib.GlobalWorkerOptions.workerSrc = "vendor/pdf.worker.min.js"; } },   // v96: local (antes CDN)
+  qrcode: { src:"vendor/qrcode.js",         ok:()=> typeof window.qrcode === "function" }
+};
+const _libCargando = {};
+function libCargar(nombre){
+  const L = LIBS[nombre];
+  if(L.ok()) return Promise.resolve();
+  if(_libCargando[nombre]) return _libCargando[nombre];
+  _libCargando[nombre] = new Promise((res, rej)=>{
+    const s = document.createElement("script");
+    s.src = L.src;
+    s.onload = ()=>{ try{ if(L.despues) L.despues(); }catch(e){} L.ok() ? res() : rej(new Error(nombre)); };
+    s.onerror = ()=> rej(new Error(nombre));
+    document.head.appendChild(s);
+  });
+  _libCargando[nombre].catch(()=>{ delete _libCargando[nombre]; });   // si falló (sin internet), se puede reintentar
+  return _libCargando[nombre];
+}
+/* Si la librería ya está: devuelve false y la función sigue normal.
+   Si falta: la carga, vuelve a llamar a `reintentar` cuando está lista y devuelve true
+   (la función que llamó tiene que cortar con return). Si no se puede cargar, avisa. */
+function libFalta(nombre, reintentar, avisoError){
+  if(LIBS[nombre].ok()) return false;
+  libCargar(nombre).then(reintentar, ()=>{ if(avisoError) avisoError(); });
+  return true;
 }
 
 const KEY = "gstock_v1";

@@ -8,7 +8,7 @@
    soc = "akira" -> sólo lo que salió del stock de esa sociedad (FIFO).
    ============================================================ */
 function exportPnL(desde, hasta, soc){
-  if(!window.XLSX){ toast(t("pnl.tt.noxlsx"),"warn"); return; }
+  if(libFalta("xlsx", ()=> _exportPnLXlsxBasico(desde, hasta, soc), ()=> toast(t("pnl.tt.noxlsx"),"warn"))) return;
   soc = (soc && STORE_IDS.includes(soc)) ? soc : null;
   /* v83: con gastos de estructura cargados (y sin filtros de juego/idioma/país/vendedor)
      el estado baja hasta el resultado operativo. gxPnL devuelve una copia aumentada. */
@@ -155,6 +155,8 @@ function exportPnL(desde, hasta, soc){
   XLSX.writeFile(wb, `${t("xl.file")}${slug}-${isoLocal(new Date())}.xlsx`);
   toast(t("pnl.tt.exported"));
 }
+// v114: referencia fija a esta versión (31b reemplaza exportPnL por la versión "pro").
+const _exportPnLXlsxBasico = exportPnL;
 function openPnLExport(){
   // Arranca con el período que estás mirando en Finanzas (antes: siempre mes en curso).
   const fr = finRange();

@@ -119,7 +119,7 @@ function drillOpenDoc(tipo, id){
   }
 }
 function drillExport(spec, rows){
-  if(!window.XLSX){ toast(t("pnl.tt.noxlsx"),"warn"); return; }
+  if(libFalta("xlsx", ()=> drillExport(spec, rows), ()=> toast(t("pnl.tt.noxlsx"),"warn"))) return;
   const aoa = [[t("pnl.drill.date"), t("dr.th.sale"), t("dr.th.customer"), t("an.th.seller"), "SKU", t("pnl.drill.product"), t("an.sl.line"), t("an.sl.language"), t("an.sl.country"), t("pnl.drill.qty"), t("an.kpi.netrev"), t("pnl.kpi.cogs"), t("an.th.margin")]];
   rows.forEach(r=> aoa.push([r.fecha, r.numero, r.cliente, r.vendedorId?r.vendedor:t("fin.house"), r.sku||"", r.nombre||"", r.saga||"", langLabel(r.idioma), paisLabel(r.pais)||"", r.cantidad, round2(r.net), round2(r.cogs), round2(r.net-r.cogs)]));
   const ws = XLSX.utils.aoa_to_sheet(aoa);

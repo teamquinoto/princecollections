@@ -12,7 +12,7 @@ function pdfMoney(n){ return db.config.moneda + " " + _pdfNf2.format(n||0); }
 function pdfQty(n){ return _pdfNf0.format(n||0); }
 
 function generarInvoicePDF(id){
-  if(!pdfReady()){ toast(t("pdf.err.gen"),"warn"); return; }
+  if(libFalta("jspdf", ()=> generarInvoicePDF(id), ()=> toast(t("pdf.err.gen"),"warn"))) return;
   const d = db.ventas.find(v=>v.id===id); if(!d){ toast(t("pdf.err.saleNotFound"),"warn"); return; }
   const cli = d.cliente || (d.clienteId?clienteById(d.clienteId):null);
   // EIN: sale del snapshot de la venta; si es una venta vieja sin el campo, lo trae del cliente vivo.
@@ -170,7 +170,7 @@ function generarInvoicePDF(id){
 
 /* Lista de precios para clientes (punto 10). Recibe la lista ya filtrada. */
 function exportListaPrecios(prods){
-  if(!pdfReady()){ toast(t("pdf.err.gen"),"warn"); return; }
+  if(libFalta("jspdf", ()=> exportListaPrecios(prods), ()=> toast(t("pdf.err.gen"),"warn"))) return;
   // Point 9: a customer price list must never leak blocked or investment items.
   const clean = prods.filter(p=> !soloEnVault(p) && !esBloqueado(p) && (p.precioVenta||0)>0);
   const dropped = prods.length - clean.length;

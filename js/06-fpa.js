@@ -245,7 +245,7 @@ function fpaParcialTxt(parcial){
    importados, pero la plantilla ya no las pide.
    ============================================================ */
 function fpaDownloadTemplate(){
-  if(!window.XLSX){ toast(t("pnl.tt.noxlsx"),"warn"); return; }
+  if(libFalta("xlsx", ()=> fpaDownloadTemplate(), ()=> toast(t("pnl.tt.noxlsx"),"warn"))) return;
   const y = finAnchor().getFullYear();
   const hdr = [t("fpa.col.mes"), t("fpa.col.linea"), t("fpa.col.ventas"), t("fpa.col.unidades")];   // v89: unidades opcional
   const lines = sagasUnicas(); if(!lines.length) lines.push("Pokémon TCG");
@@ -272,7 +272,7 @@ function fpaPickFile(){
   inp.click();
 }
 function fpaReadFile(file){
-  if(!window.XLSX){ toast(t("pnl.tt.noxlsx"),"warn"); return; }
+  if(libFalta("xlsx", ()=> fpaReadFile(file), ()=> toast(t("pnl.tt.noxlsx"),"warn"))) return;
   const fr = new FileReader();
   fr.onload = ()=>{
     try{

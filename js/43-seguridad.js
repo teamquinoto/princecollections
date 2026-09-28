@@ -149,6 +149,7 @@ function seg2faActivar(){
         try{
           if(!code){   // etapa 1: contraseña -> QR
             const j = await segPost("/2fa/setup", { pass: document.getElementById("segPass").value||"" });
+            try{ await libCargar("qrcode"); }catch(_){}   // v114: el dibujo del QR se baja recién acá
             document.getElementById("segPass").closest(".field").hidden = true;
             seg2faPintarQR(setup, j);
             return;

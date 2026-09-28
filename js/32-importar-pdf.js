@@ -85,7 +85,8 @@ function normFechaIA(f){
 
 async function handlePdf(file){
   const out=document.getElementById("importOut");
-  if(!window.pdfjsLib){ out.innerHTML=`<div class="banner warn">${t("imp.err.noreader")}</div>`; return; }
+  try{ await libCargar("pdfjs"); }   // v114: el lector de PDF se baja recién acá
+  catch(e){ out.innerHTML=`<div class="banner warn">${t("imp.err.noreader")}</div>`; return; }
   out.innerHTML=`<p style="color:var(--muted);padding:14px 0">${t("imp.reading.local",{file:esc(file.name)})}</p>`;
   try{
     const buf=await file.arrayBuffer();
