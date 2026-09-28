@@ -459,7 +459,7 @@ function srvErrText(j, status){
    (p. ej. app.tudominio.com + api.tudominio.com). En false todo sigue como
    siempre (header Bearer). Con true, cada pedido manda la cookie y el token
    ni siquiera llega a JavaScript. Ver README → "Sesión por cookie". */
-const API_COOKIE = false;
+const API_COOKIE = true;   // v112: app y servidor ya comparten dominio (app./api.princecollectionstcg.com)
 function apiFetch(url, opts){
   opts = opts || {};
   if(API_COOKIE || (session && session.cookie)) opts = { ...opts, credentials:"include" };
