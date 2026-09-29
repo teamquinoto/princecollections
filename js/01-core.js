@@ -683,13 +683,26 @@ function forceLogout(){
   session=null; saveSession(); setSyncState("off");
   showLogin();
 }
+/* v115 · Saca la pantalla de carga (#bootSplash). Se llama cuando ya se decidió qué
+   mostrar (login o app), así nunca se ve el menú vacío antes del login. Fundido corto
+   y después se elimina del DOM. Idempotente: si ya no está, no hace nada. */
+function hideBootSplash(){
+  const s=document.getElementById("bootSplash"); if(!s || s.dataset.out) return;
+  s.dataset.out="1"; s.classList.add("is-out");
+  setTimeout(()=>{ if(s.parentNode) s.parentNode.removeChild(s); }, 300);
+}
+/* Red de seguridad: si algún script falla antes de llegar a showLogin/hideLogin, al
+   terminar de cargar la página la sacamos igual (mejor ver algo que quedar trabado). */
+window.addEventListener("load", ()=> setTimeout(hideBootSplash, 1500));
 function showLogin(){
+  hideBootSplash();
   const l=document.getElementById("login"); if(l) l.hidden=false;
   const a=document.querySelector(".app"); if(a) a.style.display="none";
   const u=document.getElementById("loginUser"); if(u){ u.value=""; setTimeout(()=>u.focus(),50); }
   const p=document.getElementById("loginPass"); if(p) p.value="";
 }
 function hideLogin(){
+  hideBootSplash();
   const l=document.getElementById("login"); if(l) l.hidden=true;
   const a=document.querySelector(".app"); if(a) a.style.display="";
 }
