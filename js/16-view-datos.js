@@ -37,19 +37,15 @@ function viewDatos(){
       ${row(t("dat.acct"), t("dat.acct.signedin",{u:`<b>${esc(session?session.user:"—")}</b>`,role:`<b>${esc(roleLbl)}</b>`})+" "+t("dat.inv.line",{sp:`<b>${esc(session?session.space:"main")}</b>`,rev:syncMeta.syncedRev,dirty:syncMeta.dirty?t("dat.inv.dirty"):""})+".",
         `<button class="btn sm" data-syncnow>${ICO.sync}${t("dat.syncnow")}</button><button class="btn sm" data-logout>${ICO.logout}${t("tb.logout")}</button>`)}
       ${row(t("dat.grp.backup"), t("dat.backup.sub"),
-        `<button class="btn sm" data-export>${ICO.download}${t("dat.exportjson")}</button><button class="btn sm" data-import-json>${ICO.upload}${t("dat.importjson")}</button>`)}
+        `<button class="btn sm" data-export>${ICO.download}${t("dat.exportjson")}</button>`)}
       ${(isAdmin() && session) ? row(t("pap.title"), t("pap.sub"), `<button class="btn sm" data-papelera>${ICO.trash}${t("pap.open")}</button>`) : ""}
     </div>
   </div>
 
-  ${isAdmin()?`<div class="panel dat-full danger-zone">
-    <div class="phead"><h3>${t("dat.grp.danger")}</h3></div>
-    <div class="grid-form">
-      <p class="u-m0 hint">${t("dat.grp.danger.hint")}</p>
-      <div><button class="btn danger" data-reset>${ICO.reset}${t("dat.deleteall")}</button></div>
-    </div>
-  </div>`:""}
   </div>`;
+  /* v116 · Se quitaron "Importar JSON" y la "Zona de peligro" (Borrar todo): con la base
+     ya migrada no tienen uso en el día a día, y un clic de más reemplazaba o vaciaba todo.
+     Exportar JSON queda como copia extra. */
 }
 /* ---------- utilidades UI ---------- */
 function esc(s){ return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
@@ -90,9 +86,7 @@ function wire(){
     const [t,id]=b.dataset.deldoc.split(":"); deleteDoc(t,id);
   });
   const exp=m.querySelector("[data-export]"); if(exp) exp.onclick=exportJSON;
-  const imp=m.querySelector("[data-import-json]"); if(imp) imp.onclick=importJSON;
   const pap=m.querySelector("[data-papelera]"); if(pap) pap.onclick=()=> openPapelera();   // v96
-  const rst=m.querySelector("[data-reset]"); if(rst) rst.onclick=resetAll;
   m.querySelectorAll("[data-savecfg]").forEach(cfg=> cfg.onclick=()=>{
     const monEl=document.getElementById("cfgMon"); if(monEl){ db.config.moneda=(monEl.value||"$").trim()||"$"; }
     const fi=parseInt(document.getElementById("cfgFac").value,10); if(!isNaN(fi)&&fi>0) db.config.facturaInicio=fi;
