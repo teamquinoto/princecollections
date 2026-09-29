@@ -23,6 +23,12 @@
   <link rel="stylesheet" href="guia.css">
 </head>
 <body>
+<!-- v115 · Pantalla de carga: tapa todo mientras bajan los scripts, así no se ve la app
+     vacía antes del login. La saca showLogin()/hideLogin() (js/01-core.js). -->
+<div id="bootSplash" class="boot-splash" role="status" aria-label="Loading">
+  <img src="icon-512.png" alt="" class="boot-logo" width="84" height="84">
+  <span class="boot-bar" aria-hidden="true"><span></span></span>
+</div>
 <div id="login" class="login-scrim" hidden>
   <div class="login-aurora" aria-hidden="true"><span></span><span></span><span></span></div>
   <div class="login-card">
@@ -42,7 +48,7 @@
     </div>
     <div id="loginErr" class="login-err"></div>
     <button class="btn primary login-btn" id="loginBtn" data-i18n="core.login.signin">Sign in</button>
-    <p class="login-build">build v114</p>
+    <p class="login-build">build v115</p>
   </div>
 </div>
 <div class="topbar" id="topbar">

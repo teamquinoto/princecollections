@@ -604,6 +604,20 @@
   }
   @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 
+  /* ---------- Pantalla de carga (v115) ----------
+     Visible desde el primer pintado (está en el HTML), por encima de todo, incluso del
+     login. Mismo fondo que el login para que el paso splash → login no parpadee. */
+  .boot-splash{
+    position:fixed;inset:0;z-index:300;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;
+    background:var(--login-bg);transition:opacity .25s ease;
+  }
+  .boot-splash.is-out{opacity:0;pointer-events:none}
+  .boot-logo{border-radius:var(--r-xl);box-shadow:0 10px 30px rgba(29,78,216,.28);display:block;animation:bootPulse 1.6s ease-in-out infinite}
+  .boot-bar{position:relative;display:block;width:120px;height:3px;border-radius:var(--r-pill);background:var(--line);overflow:hidden}
+  .boot-bar span{position:absolute;top:0;left:-40%;width:40%;height:100%;border-radius:inherit;background:var(--accent);animation:bootBar 1.1s ease-in-out infinite}
+  @keyframes bootPulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(.94);opacity:.85}}
+  @keyframes bootBar{0%{left:-40%}100%{left:100%}}
+
   /* ---------- Login ---------- */
   #login[hidden]{display:none}
   .login-scrim{
