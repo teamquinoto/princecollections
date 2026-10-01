@@ -58,6 +58,7 @@ function filtrarMovs(){
   const stores=effectiveStores();
   const q=(f.q||"").trim().toLowerCase();
   const vmin=f.vmin!==""?parseNum(f.vmin):null, vmax=f.vmax!==""?parseNum(f.vmax):null;
+  const pmap = {}; if(f.saga) (db.productos||[]).forEach(p=> pmap[p.id]=p);   // v117: juego del producto actual
   const out = db.movimientos.filter(m=>{
     if(m.store && !stores.includes(m.store)) return false;
     if(f.tipo){
@@ -68,8 +69,13 @@ function filtrarMovs(){
       else if(m.tipo!==f.tipo) return false;
     }
     if(q){ const hay=((m.nombre||"")+" "+(m.sku||"")+" "+(m.ref||"")).toLowerCase(); if(!hay.includes(q)) return false; }
-    if(f.saga && sagaDe({nombre:m.nombre})!==f.saga) return false;
-    const fch=(m.fecha||"").slice(0,10);
+    // v117: el juego sale del producto ACTUAL (igual que el desplegable, que lista los juegos
+    // de Productos). Antes usaba el nombre guardado en el movimiento: si el producto se
+    // renombró, sus movimientos viejos no aparecían al filtrar por su juego.
+    if(f.saga && sagaDe(pmap[m.productoId] || {nombre:m.nombre})!==f.saga) return false;
+    // v117: fecha en hora LOCAL, la misma que muestra la tabla (antes se filtraba por la
+    // fecha UTC: un movimiento de las 22 hs del 30/09 no entraba en "hasta 30/09").
+    const fch = finMovFecha(m);
     if(f.desde && fch < f.desde) return false;
     if(f.hasta && fch > f.hasta) return false;
     const v=m.valorUnit||0;

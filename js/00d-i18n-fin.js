@@ -18,7 +18,7 @@
     "fin.metric":"Metric",
 
     "fin.an.title":"Sales & margin",
-    "fin.an.sub":"What we sold, what we bought and what we earned, month by month. Filters apply here and on the Income statement.",
+    "fin.an.sub":"What we sold, what we bought and what we earned, month by month. Game, language, country and seller filters are shared with Overview, the Income statement and the Sales plan; the period starts at Month on each tab.",
     "fin.kpi.gmpct":"Gross margin %",
     "fin.kpi.gmsub":"{v} after FIFO cost",
     "fin.kpi.ofnet":"{p} of net revenue",
@@ -80,7 +80,7 @@
     "fin.metric":"Métrica",
 
     "fin.an.title":"Ventas y margen",
-    "fin.an.sub":"Qué vendimos, qué compramos y cuánto ganamos, mes a mes. Los filtros aplican acá y en el Estado de resultados.",
+    "fin.an.sub":"Qué vendimos, qué compramos y cuánto ganamos, mes a mes. Juego, idioma, país y vendedor se comparten con el Resumen, el Estado de resultados y el Plan de ventas; el período arranca en Mes en cada pestaña.",
     "fin.kpi.gmpct":"Margen bruto %",
     "fin.kpi.gmsub":"{v} después del costo FIFO",
     "fin.kpi.ofnet":"{p} del ingreso neto",
@@ -959,6 +959,8 @@
   Object.assign(I18N.en, {
     "pnl.wf.selling":"\u2212 Other selling", "xl.is.gp":"Gross margin",
     "stk.legend1":"1 closed month is frozen (it doesn't change if an old document is edited later); the rest are rebuilt from the stock ledger. The investment vault is excluded.",
+    "stk.socnote":"Months frozen before this version have no breakdown by company: with a company selected they're rebuilt from the stock ledger. Tap \"Recalculate closed months\" to freeze them with the breakdown.",
+    "dr.clipped":"cut to the selected period", "dr.stock.line":"Stock at the end of {m}: {v}", "dr.stock.prev":"end of {m}: {v}", "dr.stock.var":"change: {v}",
     "gx.th.pctnet":"% of revenue", "gx.th.vsavg":"vs 3-mo avg", "gx.th.vsavgtip":"Against the average of the previous 3 months that have expenses loaded. Up = red.",
     "gx.ctx.same":"same", "gx.ctx.new":"new", "gx.ctx.newtip":"This category had no expenses in the previous months",
     "gx.ctx.avgtip":"Average of the previous months with expenses: {v}",
@@ -981,6 +983,8 @@
     "pnl.wf.selling":"\u2212 Otros costos", "pnl.wf.cogs":"\u2212 Costo vendido", "pnl.wf.cargos":"+ Cargos",
     "xl.is.net":"Ingreso neto", "xl.is.gp":"Margen bruto",
     "stk.legend1":"1 mes cerrado está congelado (no cambia si después se edita un documento viejo); el resto se reconstruye desde el kardex. La bóveda de inversión queda afuera.",
+    "stk.socnote":"Los meses congelados antes de esta versión no tienen el corte por sociedad: con una sociedad elegida se reconstruyen desde el kardex. Tocá \"Recalcular meses cerrados\" para congelarlos con el corte.",
+    "dr.clipped":"recortado al período elegido", "dr.stock.line":"Stock al cierre de {m}: {v}", "dr.stock.prev":"cierre de {m}: {v}", "dr.stock.var":"variación: {v}",
     "gx.th.pctnet":"% del ingreso", "gx.th.vsavg":"vs prom. 3 meses", "gx.th.vsavgtip":"Contra el promedio de los 3 meses anteriores que tienen gastos cargados. Si sube, va en rojo.",
     "gx.ctx.same":"igual", "gx.ctx.new":"nuevo", "gx.ctx.newtip":"Esta categoría no tenía gastos en los meses anteriores",
     "gx.ctx.avgtip":"Promedio de los meses anteriores con gastos: {v}",
@@ -1043,7 +1047,7 @@
     "gx.f.lastamt":"last: {v}",
     "gx.rec.pend":"{n} recurring expense(s) not loaded yet for {m}:", "gx.rec.last":"last {v}",
     "gx.bud.over":"Over budget this month: {l}.", "gx.bud.tip":"Monthly budget for this category", "gx.bud.chip":"budget {v}",
-    "wk.title":"Last 12 weeks", "wk.sub":"Monday to Sunday, with the section's filters.", "wk.partial":"The current week has {d} day(s).", "wk.wow":"vs previous week: {p}.",
+    "wk.title":"Last 12 weeks", "wk.sub":"Monday to Sunday, with the section's filters except the period (always the last 12 weeks).", "wk.partial":"The current week has {d} day(s).", "wk.wow":"vs previous week: {p}.",
     "rr.label":"Annual run rate:", "rr.val":"{v}", "rr.how":"(last-30-days daily pace × 365). Useful to size the business; it's not a forecast.",
     "dat.cat.links":"Links per seller (orders arrive signed for that seller):", "dat.cat.linkgen":"Generic link", "dat.cat.copied":"Link copied: {n}"
   });
@@ -1084,7 +1088,7 @@
     "gx.f.lastamt":"último: {v}",
     "gx.rec.pend":"Faltan cargar {n} gasto(s) recurrente(s) de {m}:", "gx.rec.last":"último {v}",
     "gx.bud.over":"Pasaron su presupuesto este mes: {l}.", "gx.bud.tip":"Presupuesto mensual de esta categoría", "gx.bud.chip":"presup. {v}",
-    "wk.title":"Últimas 12 semanas", "wk.sub":"De lunes a domingo, con los filtros de la sección.", "wk.partial":"La semana en curso lleva {d} día(s).", "wk.wow":"Contra la semana anterior: {p}.",
+    "wk.title":"Últimas 12 semanas", "wk.sub":"De lunes a domingo, con los filtros de la sección salvo el período (siempre son las últimas 12).", "wk.partial":"La semana en curso lleva {d} día(s).", "wk.wow":"Contra la semana anterior: {p}.",
     "rr.label":"Run rate anual:", "rr.val":"{v}", "rr.how":"(ritmo diario de los últimos 30 días × 365). Sirve para dimensionar el negocio; no es un pronóstico.",
     "dat.cat.links":"Links por vendedor (los pedidos llegan firmados para ese vendedor):", "dat.cat.linkgen":"Link genérico", "dat.cat.copied":"Link copiado: {n}"
   });

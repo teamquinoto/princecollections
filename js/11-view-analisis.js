@@ -429,7 +429,7 @@ function viewAnalisis(){
     const d = (m.gpPct!=null && prevPct!=null) ? (m.gpPct-prevPct)*100 : null;
     if(m.gpPct!=null) prevPct = m.gpPct;
     const dTxt = d==null ? "—" : (Math.abs(d)<0.05 ? "= 0 pp" : (d>0?"▲ +":"▼ −")+nfDec(1).format(Math.abs(d))+" pp");
-    const stk = finStockAt(m.mk, { linea:q.linea, idioma:q.idioma });
+    const stk = finStockAt(m.mk, { linea:q.linea, idioma:q.idioma, soc:q.soc });   // v117: + sociedad
     return `<tr class="drillable" data-drill="m:${m.mk}" tabindex="0" title="${t("dr.tap")}"><td>${esc(m.label)}</td><td class="num">${m.net?moneyRound(m.net):"—"}</td><td class="num">${m.purch?moneyRound(m.purch):"—"}</td>
       <td class="num ${rt!=null&&rt>1.2?"warn":""}">${rt!=null?nfDec(2).format(rt):"—"}</td>
       <td class="num">${m.net?moneyRound(m.gp):"—"}</td><td class="num"><b>${m.gpPct!=null?fmtPct(m.gpPct):"—"}</b></td>
@@ -566,22 +566,27 @@ function wireAnalisis(){
    STOCK AL CIERRE DE CADA MES (fotos mensuales, 05-metrics.js)
    ============================================================ */
 function finStockHistoryPanel(q, r){
-  const d = { linea:q.linea, idioma:q.idioma };
+  const d = { linea:q.linea, idioma:q.idioma, soc:q.soc||null };   // v117: también filtra por sociedad
   // Últimos 12 meses hasta el fin del período (o hasta hoy)
   const end = r.to ? r.to.slice(0,7) : finCurMonth();
   const [ey,em] = end.split("-").map(Number);
   const pts = [];
-  for(let i=11;i>=0;i--){ const dt=new Date(ey, em-1-i, 1), mk=finIso(dt).slice(0,7); const st=finStockAt(mk, d); if(st) pts.push({ mk, label:finMonthLabel(mk), value:st.value, units:st.units, source:st.source, drill:"m:"+mk }); }
+  /* v117: el gráfico NO depende del período (son siempre 12 meses), así que cada barra
+     abre el mes calendario completo ("mes:"). Antes usaba "m:", que recortaba el mes al
+     período elegido: con "Mes" (octubre) tocar septiembre daba 01/10 – 30/09 y vacío. */
+  for(let i=11;i>=0;i--){ const dt=new Date(ey, em-1-i, 1), mk=finIso(dt).slice(0,7); const st=finStockAt(mk, d); if(st) pts.push({ mk, label:finMonthLabel(mk), value:st.value, units:st.units, source:st.source, drill:"mes:"+mk }); }
   if(!pts.length) return "";
   const snaps = pts.filter(p=>p.source==="snap").length;
+  // Fotos congeladas antes de v117 no traen el corte por sociedad: se avisa y se ofrece recalcular
+  const oldSnaps = d.soc ? pts.filter(p=> p.source==="calc" && db.stockSnaps && db.stockSnaps[p.mk] && !db.stockSnaps[p.mk].socSeg).length : 0;
   return `
   <div class="u-mb5 panel chart">
     <div class="u-flex u-between u-items-start u-gap3 u-wrap">
-      <div><p class="ctitle">${t("stk.title")}</p><p class="csub">${t("stk.sub")}</p></div>
+      <div><p class="ctitle">${t("stk.title")}${d.soc?` · ${esc(storeName(d.soc))}`:""}</p><p class="csub">${t("stk.sub")}</p></div>
       ${isAdmin()?`<button type="button" class="btn ghost sm" id="stk_refreeze">${t("stk.refreeze")}</button>`:""}
     </div>
     ${trendChartSVG(pts.map(p=>({ label:p.label, value:p.value, drill:p.drill })), money, "var(--series-purch)")}
-    <p class="fin-help">${t(snaps===1?"stk.legend1":"stk.legend",{n:snaps})}</p>
+    <p class="fin-help">${t(snaps===1?"stk.legend1":"stk.legend",{n:snaps})}${oldSnaps?" "+t("stk.socnote"):""}</p>
   </div>`;
 }
 

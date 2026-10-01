@@ -42,12 +42,16 @@ function resumenSeries(q){
 function resumenRiesgos(q, ctx){
   const out = [];
   const d = { linea:q.linea, idioma:q.idioma };
+  /* v117: con una sociedad elegida, los riesgos de STOCK miran sólo su stock y sus compras,
+     igual que la tarjeta "Stock (hoy)". Antes el stock sin rotación sumaba todas las
+     sociedades y lo dividía por el stock de una sola (podía dar más del 100%). */
+  const stores = q.soc ? [q.soc] : STORE_IDS;
   const a = finAnchor(), iso = n=>{ const x=new Date(a); x.setDate(x.getDate()-n); return finIso(x); };
   const prods = productosVendibles().filter(p=> finProdMatch(p, d));
 
   // 1) Stock sin rotación: capas FIFO que entraron hace más de 90 días y siguen ahí
   const lim90 = iso(90); let agedV=0; const agedSkus=new Set();
-  prods.forEach(p=> STORE_IDS.forEach(s=> fifoLayers(p,s).forEach(L=>{
+  prods.forEach(p=> stores.forEach(s=> fifoLayers(p,s).forEach(L=>{
     if(L.cantidad>0 && (L.fecha||"").slice(0,10) < lim90){ agedV += L.cantidad*L.costoUnit; agedSkus.add(p.id); }
   })));
   if(agedV>0.5 && ctx.S.valuation>0){
@@ -72,6 +76,7 @@ function resumenRiesgos(q, ctx){
   const lim30 = iso(30); let trV=0, trN=0;
   (db.compras||[]).forEach(c=>{
     if(c.status!==INVOICE_STATUS.IN_TRANSIT || (normISO(c.fecha)||"") >= lim30) return;
+    if(q.soc && (c.store||STORE_IDS[0])!==q.soc) return;            // v117
     const v = (c.lineas||[]).reduce((s,l)=> finProdMatch(prodById(l.productoId), d) ? s+(l.cantidad||0)*((l.costoTotal!=null)?l.costoTotal:(l.precio||0)) : s, 0);
     if(v>0){ trV+=v; trN++; }
   });
@@ -182,8 +187,12 @@ function viewResumen(){
     if(inc) ebitTag = `<span class="kpi-tag" title="${esc(t("gx.nogx.tip"))}">${t("gx.nogx.kpitag")}</span>`;
   } else if(O && O.blocked){ ebitSub = t("gx.pnl.blocked"); }
   // Punto de equilibrio del MES EN CURSO (mismo cálculo que Gastos de estructura)
-  const BE = (typeof gxBreakEvenMes==="function" && gxHasAny()) ? gxBreakEvenMes(finCurMonth(), q.soc) : null;
-  let beVal = "—", beSub = t("rs.kpi.be.nogx"), beCls = "";
+  /* v117: igual que el resultado operativo, el punto de equilibrio sale de los gastos de
+     estructura, que no se asignan por juego, idioma, país ni vendedor: con esos filtros no
+     se muestra (antes mostraba el de la empresa entera al lado de KPIs filtrados). */
+  const dimsOn = finDimsActive();
+  const BE = (!dimsOn && typeof gxBreakEvenMes==="function" && gxHasAny()) ? gxBreakEvenMes(finCurMonth(), q.soc) : null;
+  let beVal = "—", beSub = (dimsOn && typeof gxHasAny==="function" && gxHasAny()) ? t("gx.pnl.blocked") : t("rs.kpi.be.nogx"), beCls = "";
   if(BE && BE.pe!=null){
     beVal = bigMoney(BE.pe);
     if(BE.P.net >= BE.pe){ beSub = t("rs.kpi.be.ok",{v:moneyRound(BE.P.net)}); }
@@ -274,9 +283,11 @@ function viewResumen(){
   const d = { linea:q.linea, idioma:q.idioma };
   const prods = productosVendibles().filter(p=> finProdMatch(p, d));
   const reponer = prods.filter(necesitaPedido).length;
-  const transit = (db.compras||[]).filter(c=> c.status===INVOICE_STATUS.IN_TRANSIT && (c.lineas||[]).some(l=> finProdMatch(prodById(l.productoId), d)));
-  const blocked = prods.filter(p=> esBloqueado(p) && stockTotalP(p)>0);
-  const blockedV = blocked.reduce((s,p)=> s + STORE_IDS.reduce((x,st)=> x + fifoLayers(p,st).reduce((y,L)=>y+L.cantidad*L.costoUnit,0),0), 0);
+  // v117: tránsito y bloqueados respetan la sociedad elegida (reponer sigue siendo del pool único)
+  const stores = q.soc ? [q.soc] : STORE_IDS;
+  const transit = (db.compras||[]).filter(c=> c.status===INVOICE_STATUS.IN_TRANSIT && (!q.soc || (c.store||STORE_IDS[0])===q.soc) && (c.lineas||[]).some(l=> finProdMatch(prodById(l.productoId), d)));
+  const blocked = prods.filter(p=> esBloqueado(p) && stores.reduce((a,st)=> a + stockDe(p,st), 0)>0);
+  const blockedV = blocked.reduce((s,p)=> s + stores.reduce((x,st)=> x + fifoLayers(p,st).reduce((y,L)=>y+L.cantidad*L.costoUnit,0),0), 0);
   const ver = fpaVigente(), curMonth = finIso(finAnchor()).slice(0,7);
   const planCovers = ver && (ver.filas||[]).some(x=> x.mes===curMonth);
   const decs = [];

@@ -3,7 +3,10 @@
    DRILL-DOWN: tocar un mes o una barra y ver las ventas que lo componen
    ------------------------------------------------------------
    Cualquier elemento con data-drill="<código>" abre el detalle:
-     m:2026-03     un mes (ventas + compras de ese mes)
+     m:2026-03     un mes de un gráfico/tabla que SIGUE al período (se recorta al período,
+                   así suma lo mismo que la barra; ej. el mes en curso llega hasta hoy)
+     mes:2026-03   un mes CALENDARIO completo, ignorando el período (v117: gráficos que
+                   no dependen del período, como "Stock al cierre de cada mes")
      pid:<id>      un producto
      pais:<país>   idioma:<JP|ESP|KOR|EN>   vend:<vendedorId>  ("vend:" = sin vendedor)
      soc:<sociedad>   linea:<línea>
@@ -15,17 +18,27 @@
 let _drillLast = null;
 const DRILL_MAX_ROWS = 300;
 
-function drillMonthRange(q, mk){
+/* v117: el mes se recorta al período SOLO si se superponen. Antes, tocar un mes que
+   quedaba fuera del período (ej. Sep desde el gráfico de stock con el período en "Mes" =
+   octubre) armaba un rango invertido (01/10 – 30/09) y el detalle salía vacío. */
+function drillMonthRange(q, mk, full){
   const [y,m] = mk.split("-").map(Number);
   const a = `${mk}-01`, b = finIso(new Date(y, m, 0));
-  return { from: (q.from && q.from>a) ? q.from : a, to: (q.to && q.to<b) ? q.to : b };
+  if(full) return { from:a, to:b, clipped:false };
+  const from = (q.from && q.from>a) ? q.from : a, to = (q.to && q.to<b) ? q.to : b;
+  if(from > to) return { from:a, to:b, clipped:false };       // fuera del período: el mes entero
+  return { from, to, clipped: from!==a || to!==b };
 }
 /* Traduce un código a { title, q, filter, mk, pid } */
 function drillSpec(code, ctx){
   const i = code.indexOf(":"), kind = code.slice(0,i), val = code.slice(i+1);
   const q = (ctx==="plan" && typeof planQuery==="function") ? planQuery() : finQuery();
-  const spec = { code, ctx, q, filter:null, title:"", mk:null, pid:null };
-  if(kind==="m"){ Object.assign(q, drillMonthRange(q, val)); spec.mk = val; spec.title = t("dr.t.month",{m:finMonthLabel(val)}); }
+  const spec = { code, ctx, q, filter:null, title:"", mk:null, pid:null, clipped:false, stock:false };
+  if(kind==="m" || kind==="mes"){
+    const R = drillMonthRange(q, val, kind==="mes");
+    q.from = R.from; q.to = R.to; spec.clipped = R.clipped; spec.mk = val; spec.stock = (kind==="mes");
+    spec.title = t("dr.t.month",{m:finMonthLabel(val)});
+  }
   else if(kind==="pid"){ const p = prodById(val); spec.pid = val; spec.filter = r=> r.productoId===val; spec.title = p ? p.nombre : val; }
   else if(kind==="pais"){ spec.filter = r=> r.pais===val; spec.title = t("dr.t.country",{v:paisLabel(val)}); }
   else if(kind==="idioma"){ spec.filter = r=> r.idioma===val; spec.title = t("dr.t.lang",{v:langLabel(val)}); }
@@ -80,8 +93,21 @@ function finDrillOpen(spec){
       <tbody>${purch.map(x=>`<tr class="drillable" data-drill-pdoc="${esc(x.id)}" tabindex="0" title="${t("dr.openpurch")}"><td class="num">${esc(fmtDate(x.fecha))}</td><td class="num">${esc(x.numero||"—")}</td><td>${esc(x.prov||"—")}</td><td>${esc(x.soc)}</td><td>${esc(invoiceStatusLabel(x.status))}</td><td class="num">${qty(x.u)}</td><td class="num">${money(x.v)}</td></tr>`).join("")}</tbody>
       <tfoot><tr><td colspan="5">${t("common.total")}</td><td class="num">${qty(pT.u)}</td><td class="num">${money(pT.v)}</td></tr></tfoot>
     </table></div>` : `<p class="u-m0 hint">${t("dr.purch.none")}</p>`}` : "";
+  /* v117: desde el gráfico de stock, el detalle muestra también el stock al cierre del mes
+     y el del mes anterior (con los mismos filtros de juego, idioma y sociedad). */
+  let stockHTML = "";
+  if(spec.stock && spec.mk && typeof finStockAt==="function"){
+    const [y,m] = spec.mk.split("-").map(Number), prevMk = finIso(new Date(y, m-2, 1)).slice(0,7);
+    const dS = { linea:spec.q.linea, idioma:spec.q.idioma, soc:spec.q.soc||null };
+    const cur = finStockAt(spec.mk, dS), prev = finStockAt(prevMk, dS);
+    if(cur){
+      const dv = prev ? round2(cur.value - prev.value) : null;
+      stockHTML = `<p class="u-m0 u-mb3 hint">${t("dr.stock.line",{m:finMonthLabel(spec.mk), v:money(cur.value)})}${cur.source==="live"?" ("+t("fin.today")+")":""}${prev?" · "+t("dr.stock.prev",{m:finMonthLabel(prevMk), v:money(prev.value)})+" · "+t("dr.stock.var",{v:(dv>=0?"+":"−")+money(Math.abs(dv))}):""}</p>`;
+    }
+  }
   const html = `
-    <p class="u-m0 u-mb3 hint">${esc(period)}${dims?" · "+esc(dims):""}${spec.q.soc?" · "+esc(storeName(spec.q.soc)):""}</p>
+    <p class="u-m0 u-mb3 hint">${esc(period)}${dims?" · "+esc(dims):""}${spec.q.soc?" · "+esc(storeName(spec.q.soc)):""}${spec.clipped?" · "+t("dr.clipped"):""}</p>
+    ${stockHTML}
     <div class="dr-sum">
       <div><span>${t("dr.s.sales")}</span><b>${qty(ventas)}</b></div>
       <div><span>${t("an.th.units")}</span><b>${qty(T.u)}</b></div>

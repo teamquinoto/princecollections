@@ -384,6 +384,20 @@ function finSegMatch(seg, d){
   return true;
 }
 function finCurMonth(){ return finIso(new Date()).slice(0,7); }
+/* v117: fecha de un movimiento del kardex en hora LOCAL. moverStock() guarda la fecha
+   con toISOString() (UTC): un movimiento cargado después de las 21 hs de Argentina
+   caía en el día (y a fin de mes, en el MES) siguiente. Movimientos lo muestra en hora
+   local; el filtro de fechas y la historia de stock ahora usan la misma fecha. */
+function finMovFecha(m){
+  const f = m && m.fecha; if(!f) return "";
+  if(/T\d{2}:\d{2}/.test(String(f))){ const d = new Date(f); if(!isNaN(d)) return finIso(d); }
+  return normISO(f) || "";
+}
+/* v117: la reconstrucción se arma POR SOCIEDAD (cada movimiento guarda su store y cada
+   sociedad tiene sus capas FIFO). El consolidado es la suma de las sociedades, así que da
+   exactamente lo mismo que antes; la diferencia es que ahora el chip de sociedad también
+   filtra la historia de stock (antes el gráfico y la columna "Stock al cierre" mostraban
+   siempre el consolidado aunque estuvieras mirando Akira o Silver). */
 function finStockReconstruct(){
   if(_stkCache) return _stkCache;
   const ventaF = {}; (db.ventas||[]).forEach(v=>{ ventaF[v.id] = normISO(v.fecha)||""; });
@@ -392,60 +406,78 @@ function finStockReconstruct(){
      de junio y julio cargadas el 20/08 dejaban "Stock al cierre" vacío en esos meses, aunque
      el gráfico de compras (que va por fecha de factura) sí las mostraba. */
   const compraF = {}; (db.compras||[]).forEach(c=>{ compraF[c.id] = normISO(c.fecha)||""; });
-  const perProd = {}; let minMk = null;
+  const perPS = {}; let minMk = null;            // clave productoId|sociedad
   (db.movimientos||[]).forEach(m=>{
     if(!isStore(m.store)) return;                                   // sólo stock vendible
     const f = (m.refTipo==="venta" && ventaF[m.refId]) ? ventaF[m.refId]
             : (m.refTipo==="compra" && compraF[m.refId]) ? compraF[m.refId]
-            : (normISO(m.fecha)||"");
+            : finMovFecha(m);
     if(!f) return;
     const mk = f.slice(0,7), du = (+m.delta||0), dv = du*(+m.valorUnit||0);
-    const e = perProd[m.productoId] = perProd[m.productoId] || { u:0, v:0, byMonth:{} };
+    const k = m.productoId+"|"+m.store;
+    const e = perPS[k] = perPS[k] || { u:0, v:0, byMonth:{} };
     e.u+=du; e.v+=dv;
     const b = e.byMonth[mk] = e.byMonth[mk] || { u:0, v:0 }; b.u+=du; b.v+=dv;
     if(!minMk || mk<minMk) minMk = mk;
   });
-  const segs = {};
+  const bySoc = {};
+  STORE_IDS.forEach(s=> bySoc[s] = {});
   (db.productos||[]).forEach(p=>{
-    const curU = stockTotalP(p);
-    const curV = STORE_IDS.reduce((a,s)=> a + fifoLayers(p,s).reduce((x,L)=>x+L.cantidad*L.costoUnit,0), 0);
-    const e = perProd[p.id] || { u:0, v:0, byMonth:{} };
-    const sg = segs[finStockSeg(p)] = segs[finStockSeg(p)] || { offU:0, offV:0, byMonth:{} };
-    sg.offU += curU - e.u; sg.offV += curV - e.v;                  // saldo inicial no registrado
-    Object.keys(e.byMonth).forEach(mk=>{ const b=sg.byMonth[mk]=sg.byMonth[mk]||{u:0,v:0}; b.u+=e.byMonth[mk].u; b.v+=e.byMonth[mk].v; });
+    const seg = finStockSeg(p);
+    STORE_IDS.forEach(s=>{
+      const curU = stockDe(p, s);
+      const curV = fifoLayers(p,s).reduce((x,L)=>x+L.cantidad*L.costoUnit,0);
+      const e = perPS[p.id+"|"+s] || { u:0, v:0, byMonth:{} };
+      if(!curU && !curV && !e.u && !e.v && !Object.keys(e.byMonth).length) return;
+      const sg = bySoc[s][seg] = bySoc[s][seg] || { offU:0, offV:0, byMonth:{} };
+      sg.offU += curU - e.u; sg.offV += curV - e.v;                // saldo inicial no registrado
+      Object.keys(e.byMonth).forEach(mk=>{ const b=sg.byMonth[mk]=sg.byMonth[mk]||{u:0,v:0}; b.u+=e.byMonth[mk].u; b.v+=e.byMonth[mk].v; });
+    });
   });
-  _stkCache = { segs, minMk };
+  _stkCache = { bySoc, minMk };
   return _stkCache;
 }
-/* Saldo reconstruido al cierre de `mk`, por segmento. */
-function finStockSegsAt(mk){
-  const R = finStockReconstruct(), out = {};
-  Object.keys(R.segs).forEach(seg=>{
-    const s = R.segs[seg]; let u = s.offU, v = s.offV;
-    Object.keys(s.byMonth).forEach(m=>{ if(m<=mk){ u+=s.byMonth[m].u; v+=s.byMonth[m].v; } });
-    if(Math.abs(u)>0.0001 || Math.abs(v)>0.005) out[seg] = { u:round4(u), v:round2(v) };
+/* Saldo reconstruido al cierre de `mk`, por segmento. soc = una sociedad o null (consolidado). */
+function finStockSegsAt(mk, soc){
+  const R = finStockReconstruct(), acc = {};
+  (soc ? [soc] : STORE_IDS).forEach(s=>{
+    const segs = R.bySoc[s] || {};
+    Object.keys(segs).forEach(seg=>{
+      const x = segs[seg]; let u = x.offU, v = x.offV;
+      Object.keys(x.byMonth).forEach(m=>{ if(m<=mk){ u+=x.byMonth[m].u; v+=x.byMonth[m].v; } });
+      const a = acc[seg] = acc[seg] || { u:0, v:0 }; a.u+=u; a.v+=v;
+    });
   });
+  const out = {};
+  Object.keys(acc).forEach(seg=>{ const a=acc[seg]; if(Math.abs(a.u)>0.0001 || Math.abs(a.v)>0.005) out[seg] = { u:round4(a.u), v:round2(a.v) }; });
   return out;
 }
-/* Stock al cierre de un mes, con los filtros de línea/idioma.
+/* Stock al cierre de un mes, con los filtros de línea/idioma y (v117) sociedad.
    source: "live" (mes en curso = stock real de hoy) · "snap" (mes congelado) · "calc" (reconstruido).
-   null si el mes es anterior al primer movimiento registrado. */
+   null si el mes es anterior al primer movimiento registrado.
+   Fotos congeladas antes de v117 no tienen el corte por sociedad: con una sociedad elegida,
+   ese mes se reconstruye desde el kardex ("calc") hasta que se toque "Recalcular meses cerrados". */
 function finStockAt(mk, d){
   d = d || {};
-  if(mk >= finCurMonth()){ const S = finStock({ linea:d.linea, idioma:d.idioma }); return { units:S.units, value:S.valuation, source:"live" }; }
+  const soc = d.soc || null;
+  if(mk >= finCurMonth()){ const S = finStock({ linea:d.linea, idioma:d.idioma, soc }); return { units:S.units, value:S.valuation, source:"live" }; }
   const snap = db.stockSnaps && db.stockSnaps[mk];
-  let segs, source;
-  if(snap && snap.seg){ segs = snap.seg; source = "snap"; }
-  else {
+  let segs = null, source;
+  if(snap){
+    if(!soc && snap.seg){ segs = snap.seg; source = "snap"; }
+    else if(soc && snap.socSeg && snap.socSeg[soc]){ segs = snap.socSeg[soc]; source = "snap"; }
+  }
+  if(!segs){
     const R = finStockReconstruct();
     if(!R.minMk || mk < R.minMk) return null;
-    segs = finStockSegsAt(mk); source = "calc";
+    segs = finStockSegsAt(mk, soc); source = "calc";
   }
   let u=0, v=0;
   Object.keys(segs).forEach(seg=>{ if(finSegMatch(seg, d)){ u+=segs[seg].u||0; v+=segs[seg].v||0; } });
   return { units:round4(u), value:round2(v), source };
 }
-/* Congela los meses cerrados que falten (máx. 36 hacia atrás). Sólo admin. */
+/* Congela los meses cerrados que falten (máx. 36 hacia atrás). Sólo admin.
+   v117: cada foto guarda también el corte por sociedad (socSeg). */
 function finFreezeStockSnaps(force){
   if(typeof isAdmin==="function" && !isAdmin()) return 0;
   if(!db.stockSnaps || typeof db.stockSnaps!=="object") db.stockSnaps = {};
@@ -458,7 +490,11 @@ function finFreezeStockSnaps(force){
   let n = 0;
   while(y<cy || (y===cy && m<cm)){
     const mk = `${y}-${String(m).padStart(2,"0")}`;
-    if(mk>=limMk && (force || !db.stockSnaps[mk])){ db.stockSnaps[mk] = { at:new Date().toISOString(), seg:finStockSegsAt(mk) }; n++; }
+    if(mk>=limMk && (force || !db.stockSnaps[mk])){
+      const socSeg = {}; STORE_IDS.forEach(s=> socSeg[s] = finStockSegsAt(mk, s));
+      db.stockSnaps[mk] = { at:new Date().toISOString(), seg:finStockSegsAt(mk, null), socSeg };
+      n++;
+    }
     m++; if(m>12){ m=1; y++; }
   }
   if(n) save();
