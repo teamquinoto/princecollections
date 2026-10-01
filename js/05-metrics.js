@@ -29,11 +29,19 @@ function finResetFiltros(){ finFiltros = { periodo:"mtd", desde:"", hasta:"", li
 
 /* ---------- Fechas ---------- */
 function finIso(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
-/* Ancla del período: hoy, o la venta más reciente si está fechada a futuro. */
+/* Ancla del período: HOY.
+   v117: antes, si había una venta fechada a futuro, el ancla saltaba a esa fecha y
+   un error de tipeo (una venta en 2027) movía "Mes" de toda Finanzas a ese mes y dejaba
+   todo vacío. Las ventas con fecha posterior a hoy no entran en Mes/Trim./Año/12 meses
+   (sí en Todo y en un Rango que las incluya) y la barra de filtros avisa que existen. */
 function finAnchor(){
-  let a = new Date(); a.setHours(12,0,0,0);
-  (db.ventas||[]).forEach(v=>{ const f=new Date((normISO(v.fecha)||v.fecha)+"T12:00:00"); if(!isNaN(f) && f>a) a=f; });
+  const a = new Date(); a.setHours(12,0,0,0);
   return a;
+}
+/* v117: ventas con fecha posterior a hoy (para el aviso de la barra de filtros). */
+function finVentasFuturas(){
+  const hoy = finIso(new Date());
+  return (db.ventas||[]).filter(v=> (normISO(v.fecha)||"") > hoy);
 }
 /* Rango de un preset. QTD = trimestre CALENDARIO (antes eran 3 meses móviles). */
 function finRangeFor(preset, f){
@@ -249,9 +257,10 @@ function finStock(q){
   const out = { skus:0, units:0, valuation:0, transitUnits:0, transitValue:0, alerts:0, bySaga:{} };
   productosVendibles().forEach(p=>{
     if(!finProdMatch(p, d)) return;
-    out.skus++;
     const sg = sagaDe(p), bs = out.bySaga[sg] = out.bySaga[sg] || { units:0, valuation:0, skus:0 };
-    bs.skus++;
+    /* v117: SKUs = productos CON stock (antes contaba todos los vendibles, incluso en 0,
+       y la tarjeta "X unidades · N SKUs" se leía como SKUs con stock). */
+    if(stores.reduce((a,s)=> a + stockDe(p,s), 0) > 0){ out.skus++; bs.skus++; }
     stores.forEach(s=>{
       const v = fifoLayers(p,s).reduce((a,L)=>a+L.cantidad*L.costoUnit,0);
       bs.units += stockDe(p,s); bs.valuation += v;

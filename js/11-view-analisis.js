@@ -158,6 +158,9 @@ function finFilterBarHTML(){
   const f = finFiltros, r = finRange(f);
   const opt = (val, label, cur)=> `<option value="${esc(val)}" ${cur===val?"selected":""}>${esc(label)}</option>`;
   const note = finDimsActive(f) ? `<div class="finbar-note">${t("fin.showing",{sel:`<b>${esc(finDimsLabel(f))}</b>`})}</div>` : "";
+  // v117: el período se ancla a HOY; si hay ventas fechadas a futuro, se avisa (suele ser un error de tipeo)
+  const fut = finVentasFuturas();
+  const futNote = fut.length ? `<div class="finbar-note warn-ink">${t(fut.length===1?"fin.future1":"fin.future",{n:fut.length, nums:esc(fut.slice(0,5).map(v=> (v.numero||"—")+" ("+fmtDate(v.fecha)+")").join(", "))})}</div>` : "";
   return `<div class="finbar">
     ${finPeriodHTML()}
     <div class="slicer"><span>${t("an.sl.line")}</span><select id="fin_linea">${opt("",t("an.sl.all"),f.linea)}${sagasUnicas().map(s=>opt(s,s,f.linea)).join("")}</select></div>
@@ -165,7 +168,7 @@ function finFilterBarHTML(){
     <div class="slicer"><span>${t("an.sl.country")}</span><select id="fin_pais">${opt("",t("an.sl.all"),f.pais)}${paisesVentas().map(c=>opt(c,paisLabel(c),f.pais)).join("")}</select></div>
     <div class="slicer"><span>${t("an.sl.seller")}</span><select id="fin_vend">${opt("",t("an.sl.all"),f.vend)}${vendedores().map(v=>opt(v.id,v.nombre,f.vend)).join("")}</select></div>
     <button type="button" class="slicer-reset" id="fin_clear">${t("an.sl.reset")}</button>
-    ${note}
+    ${note}${futNote}
   </div>`;
 }
 function wireFinFilterBar(){

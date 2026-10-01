@@ -705,6 +705,16 @@ function confirmDoc(){
   }
   const refTxt = (isC?"Purchase":"Sale") + (doc.numero?(" "+doc.numero):"") + (doc.contraparte?(" · "+doc.contraparte):"");
 
+  /* v117: al editar una compra YA RECIBIDA, guardamos la fecha de entrada de sus capas
+     (por producto) para que vuelvan con la misma fecha y conserven su lugar en la cola FIFO. */
+  const fechaCapa = {};
+  if(isC && oldDoc && oldDoc.status===INVOICE_STATUS.RECEIVED){
+    const sOld = oldDoc.store || STORE_IDS[0];
+    (oldDoc.lineas||[]).forEach(l=>{
+      const p = prodById(l.productoId); if(!p) return;
+      fifoLayers(p, sOld).forEach(L=>{ if(L.refId===oldDoc.id && L.fecha && (!fechaCapa[p.id] || L.fecha<fechaCapa[p.id])) fechaCapa[p.id] = L.fecha; });
+    });
+  }
   // Recién ahora mutamos: primero revertimos el documento original (si estábamos editando)
   if(oldDoc) revertDoc(oldDoc);
 
@@ -716,7 +726,7 @@ function confirmDoc(){
       if(doc.status===INVOICE_STATUS.RECEIVED){
         const h = r.prorratea ? handPU : 0, f = r.prorratea ? fletePU : 0;
         const landed = round2(r.precio + h + f);
-        fifoEntrada(r.prod, store, r.cantidad, landed, refTxt, doc.id);  // FIFO purchase layer
+        fifoEntrada(r.prod, store, r.cantidad, landed, refTxt, doc.id, fechaCapa[r.prod.id]);  // FIFO purchase layer (v117: misma fecha si se editó)
         moverStock(r.prod, +r.cantidad, landed, "compra", doc.id, refTxt, { store });
         r.prod.costoNeto = r.precio; r.prod.costoHandling = round2(h); r.prod.costoFlete = round2(f);
         r.prod.ultimoCosto = landed;        // last landed cost (reference only; COGS is FIFO)
@@ -750,10 +760,18 @@ function confirmDoc(){
 
 /* ---- Revertir / borrar / editar documentos ---- */
 function recomputeUltimoCosto(prod){
-  // último costo (landed) = de la compra más reciente que todavía contenga este producto.
-  // Usamos el desglose guardado (neto+handling+flete). Compras viejas sin desglose caen a l.precio.
-  for(let i=db.compras.length-1;i>=0;i--){
-    const l = db.compras[i].lineas.find(x=>x.productoId===prod.id);
+  // último costo (landed) = de la compra RECIBIDA más reciente (por fecha de factura) que todavía
+  // contenga este producto. Usamos el desglose guardado (neto+handling+flete). Compras viejas sin
+  // desglose caen a l.precio.
+  /* v117: antes tomaba la última del array, aunque estuviera EN TRÁNSITO (al recibir sólo se
+     actualiza con compras recibidas) o fuera de fecha anterior a otra cargada antes. El último
+     costo valúa los ajustes positivos, así que un precio de una compra que no llegó podía
+     terminar valuando stock. */
+  const cands = (db.compras||[]).map((c,i)=>({c,i}))
+    .filter(x=> x.c.status!==INVOICE_STATUS.IN_TRANSIT && (x.c.lineas||[]).some(l=> l.productoId===prod.id))
+    .sort((a,b)=>{ const fa=normISO(a.c.fecha)||"", fb=normISO(b.c.fecha)||""; return fa<fb?-1 : fa>fb?1 : a.i-b.i; });
+  for(let k=cands.length-1;k>=0;k--){
+    const l = cands[k].c.lineas.find(x=>x.productoId===prod.id);
     if(l){
       prod.costoNeto = (l.neto!=null) ? l.neto : l.precio;
       prod.costoHandling = l.handling||0;

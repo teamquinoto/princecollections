@@ -10,9 +10,25 @@ function fifoLayers(prod, store){
   if(!Array.isArray(prod.lotes[store])) prod.lotes[store] = [];
   return prod.lotes[store];
 }
-/* Add a purchase layer (landed unit cost already includes prorated handling+freight). */
-function fifoEntrada(prod, store, cantidad, costoUnit, ref, refId){
-  fifoLayers(prod, store).push({ id:uid(), fecha:new Date().toISOString(), cantidad:+cantidad, costoUnit:round2(costoUnit), ref:ref||"", refId:refId||null });
+/* Add a purchase layer (landed unit cost already includes prorated handling+freight).
+   v117: `fecha` opcional = fecha de ENTRADA de la capa. Al editar una compra ya recibida,
+   la capa vuelve con su fecha original: antes nacía "ahora" y la compra editada pasaba
+   al final de la cola FIFO (las ventas siguientes tomaban otro costo). */
+function fifoEntrada(prod, store, cantidad, costoUnit, ref, refId, fecha){
+  fifoLayers(prod, store).push({ id:uid(), fecha:fecha||new Date().toISOString(), cantidad:+cantidad, costoUnit:round2(costoUnit), ref:ref||"", refId:refId||null });
+}
+/* v117: ordena las capas de UNA sociedad por fecha de entrada (estable: a igual fecha
+   respeta el orden de inserción). Las devoluciones (borrar o editar una venta) reponen
+   capas AL FRENTE con su fecha original, así que el array podía quedar desordenado; la
+   venta (FIFO global) ordena por fecha, pero los ajustes negativos y los envíos a la
+   bóveda consumían en el orden del array y podían tomar una capa más nueva que la más
+   vieja. Ahora los tres consumen en el mismo orden. */
+function fifoOrdenar(prod, store){
+  const L = fifoLayers(prod, store);
+  const idx = L.map((x,i)=>[x,i]);
+  idx.sort((a,b)=>{ const fa=a[0].fecha||"", fb=b[0].fecha||""; return fa<fb?-1 : fa>fb?1 : a[1]-b[1]; });
+  idx.forEach((x,i)=> L[i]=x[0]);
+  return L;
 }
 /* Remove (or shrink) the layer(s) a given purchase created, when reverting it. */
 function fifoQuitarCompra(prod, store, refId){
@@ -22,7 +38,7 @@ function fifoQuitarCompra(prod, store, refId){
 /* Peek the FIFO cost of consuming `cantidad` WITHOUT mutating (for previews/margin). */
 function fifoCostoPeek(prod, store, cantidad){
   let need = cantidad, cogs = 0;
-  for(const L of fifoLayers(prod, store)){
+  for(const L of fifoOrdenar(prod, store)){
     if(need<=0) break;
     const take = Math.min(L.cantidad, need);
     cogs += take * L.costoUnit; need -= take;
@@ -34,7 +50,7 @@ function fifoCostoPeek(prod, store, cantidad){
 /* Consume layers FIFO, MUTATING them. Returns {cogs, unit, consumed:[{costoUnit,cantidad}]}
    so a later revert can put the exact units back into the right layers. */
 function fifoConsumir(prod, store, cantidad){
-  const layers = fifoLayers(prod, store);
+  const layers = fifoOrdenar(prod, store);   // v117: más vieja primero, igual que la venta
   let need = cantidad, cogs = 0; const consumed = [];
   while(need>0 && layers.length){
     const L = layers[0];
