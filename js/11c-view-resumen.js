@@ -102,8 +102,11 @@ function resumenRiesgos(q, ctx){
   }
 
   // 5) Comprando más de lo que se vende en el período
-  if(ctx.A.net>0 && ctx.P.total > ctx.A.net*1.2){
-    out.push({ sev: ctx.P.total > ctx.A.net*1.5 ? "high":"low", title:t("rk.buy.t",{r:nfDec(2).format(ctx.P.total/ctx.A.net)}), desc:t("rk.buy.d",{p:finCompact(ctx.P.total), s:finCompact(ctx.A.net)}), go:"analisis", goLabel:t("rk.go.analysis") });
+  /* v117: compras (a costo) contra COSTO vendido, igual que la tabla de Ventas y margen
+     (v87). Antes comparaba contra el ingreso a precio de venta, que por el margen esconde
+     la sobrecompra. Y con país o vendedor no se evalúa: las compras no se asignan ahí. */
+  if(!q.pais && !q.vend && ctx.A.cogs>0 && ctx.P.total > ctx.A.cogs*1.2){
+    out.push({ sev: ctx.P.total > ctx.A.cogs*1.5 ? "high":"low", title:t("rk.buy.t",{r:nfDec(2).format(ctx.P.total/ctx.A.cogs)}), desc:t("rk.buy.d",{p:finCompact(ctx.P.total), s:finCompact(ctx.A.cogs)}), go:"analisis", goLabel:t("rk.go.analysis") });
   }
 
   // 6) Stock por encima del objetivo del plan
@@ -212,7 +215,7 @@ function viewResumen(){
   </div>
   <div class="kpis kpis4 rs-kpis">
     ${kpi(t("gx.kpi.be")+monthTag, beVal, beSub, "", "", beCls)}
-    ${kpi(t("fin.kpi.purch"), bigMoney(P.total), (plan&&plan.A.comprasAny)?t("plan.kpi.plan",{v:moneyRound(plan.A.compras)}):(A.cogs>0?t("fin.kpi.ratio",{r:nfDec(2).format(P.total/A.cogs)}):t("fin.kpi.purchdocs",{n:P.docs})), dCompras, sparkSVG(Ms.map(m=>m.purch), "var(--series-purch)"))}
+    ${kpi(t("fin.kpi.purch"), bigMoney(P.total), (plan&&plan.A.comprasAny)?t("plan.kpi.plan",{v:moneyRound(plan.A.compras)}):((q.pais||q.vend)?t("fin.purch.nodims.short"):(A.cogs>0?t("fin.kpi.ratio",{r:nfDec(2).format(P.total/A.cogs)}):t("fin.kpi.purchdocs",{n:P.docs}))), dCompras, sparkSVG(Ms.map(m=>m.purch), "var(--series-purch)"))}
     ${kpi(t("fin.kpi.stock")+`<span class="kpi-tag">${t("fin.today")}</span>`, bigMoney(S.valuation), (plan&&plan.A.stockAny)?t("plan.kpi.target",{v:moneyRound(plan.A.stockObj)}):t("fin.kpi.stocksub",{u:qty(S.units),n:S.skus}), dStock, "")}
     ${kpi(t("fin.kpi.dio")+`<span class="kpi-tag">${t("fin.today")}</span>`, dio!=null?t("fin.days",{n:qty(dio)}):"—", finDiasInventarioSub(dioI) + (cobertura!=null?" "+t("rs.kpi.cover2",{n:nfDec(1).format(cobertura)}):""), "", "", (dioI&&dioI.banda!=="ok")?"warn-ink":"")}
   </div>

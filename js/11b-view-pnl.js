@@ -32,8 +32,12 @@ function pnlBudget(from, to){
 }
 
 /* Ventas de un vendedor en el período (drill-down), respetando los filtros activos. */
+/* v117: vid "" = ventas sin vendedor (casa). finSaleLines toma vend:"" como "sin filtro",
+   así que la fila "Sin vendedor" desplegaba TODAS las ventas del período. Ahora se filtra
+   por el vendedorId exacto de cada línea. */
 function pnlSellerSales(vid, from, to, soc){
   return finSaleLines(Object.assign({ from:from||"", to:to||"", soc:soc||null }, finDims(finFiltros), { vend:vid }))
+    .filter(r=> (r.vendedorId||"")===(vid||""))
     .map(r=>({ fecha:r.fecha, nombre:r.nombre||r.sku||"—", qty:r.cantidad, revenue:r.revenue, margin:round2(r.revenue-r.cogs) }))
     .sort((a,b)=> a.fecha<b.fecha?1:-1);
 }

@@ -381,6 +381,10 @@ function finRitmoCostoDiario(q, maxDias){
 }
 /* {dias, ventana, banda:"low"|"ok"|"high"} o null si no hay ventas. */
 function finDiasInventarioInfo(S, q){
+  /* v117: el stock no se asigna por país ni vendedor (es de todos), así que el ritmo de
+     costo tampoco: antes, filtrando un vendedor, dividía el stock ENTERO por lo que vendió
+     ese vendedor y daba 1.100 días en vez de 135. Juego, idioma y sociedad sí aplican. */
+  q = Object.assign({}, q, { pais:"", vend:"" });
   const R = finRitmoCostoDiario(q, 90);
   if(!(R.perDay>0)) return null;
   const dias = Math.round(S.valuation/R.perDay);
@@ -406,7 +410,11 @@ function viewAnalisis(){
   const mfmt = units ? qty : money;
   // v87: compras (a costo) contra COSTO de lo vendido, no contra ventas (a precio).
   // Comparar costo con precio daba <1 casi siempre (por el margen) y escondía la sobrecompra.
-  const ratio = A.cogs>0 ? P.total/A.cogs : null;
+  /* v117: las compras no se asignan por país ni vendedor: con esos filtros se comparaban
+     las compras de TODA la empresa contra el costo vendido de un país o un vendedor. El
+     cociente se oculta y se avisa. */
+  const purchDims = !!(q.pais || q.vend);
+  const ratio = (!purchDims && A.cogs>0) ? P.total/A.cogs : null;
   /* Sin ventas el año anterior, el aviso va UNA vez debajo de los KPIs (antes se repetía en cada tarjeta). */
   const hasPrior = !!(Ap && (Ap.units>0 || (Pp && Pp.total>0)));
   const D = (cur, prev, o)=> hasPrior ? finDelta(cur, prev, o) : "";
@@ -420,12 +428,13 @@ function viewAnalisis(){
   <div class="u-mb5 panel chart">
     <p class="ctitle">${t("fin.combo.title")}</p>
     <p class="csub">${t("fin.combo.sub")} ${t("dr.hint.month")}</p>
+    ${purchDims ? `<p class="u-m0 fin-help">${t("fin.purch.nodims")}</p>` : ""}
     <div class="fin-legend"><span><i class="lg-sales"></i>${units?t("fin.s.unitssold"):t("fin.s.sales")}</span><span><i class="lg-purch"></i>${units?t("fin.s.unitsbought"):t("fin.s.purch")}</span><span><i class="dot"></i>${t("fin.s.gm")}</span></div>
     ${finComboSVG(months, units)}
   </div>`;
   let prevPct = null;
   const mRows = months.map(m=>{
-    const rt = m.cogs>0 ? m.purch/m.cogs : null;   // v87: compras / costo vendido
+    const rt = (!purchDims && m.cogs>0) ? m.purch/m.cogs : null;   // v87: compras / costo vendido · v117: sin país/vendedor
     const d = (m.gpPct!=null && prevPct!=null) ? (m.gpPct-prevPct)*100 : null;
     if(m.gpPct!=null) prevPct = m.gpPct;
     const dTxt = d==null ? "—" : (Math.abs(d)<0.05 ? "= 0 pp" : (d>0?"▲ +":"▼ −")+nfDec(1).format(Math.abs(d))+" pp");
