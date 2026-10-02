@@ -2,26 +2,52 @@
    IMPORTAR PDF
    ============================================================ */
 let pdfLines = [];   // líneas de texto reconstruidas
+/* v121: modal rediseñado. Antes de elegir: texto + zona para soltar el PDF.
+   Con la factura cargada: la zona se achica a una barra (archivo · estado · Cambiar),
+   arriba los datos de la factura y el cuadre, y "Continuar" pasa al pie del modal. */
 function openImport(){
   buildModal(t("imp.title"), `
-    <div class="banner">
-      ${t("imp.intro")}
-    </div>
-    <div class="drop" id="drop">
-      <div class="di">${ICO.sparkle}</div>
+    <p class="imp-intro">${t("imp.intro")}</p>
+    <div class="drop" id="drop" role="button" tabindex="0">
+      <div class="di">${ICO.importpdf}</div>
       <p><span class="fn">${t("imp.choosepdf")}</span> ${t("imp.ordrag")}</p>
-      <p class="u-fs-xs">${t("imp.serverhint")}</p>
-      <input type="file" id="iaInput" accept="application/pdf" hidden>
+      <p class="u-fs-xs">${t("imp.hint")}</p>
     </div>
+    <input type="file" id="iaInput" accept="application/pdf" hidden>
+    <div class="imp-fbar" id="impFile" hidden></div>
     <div id="importOut"></div>
   `,[{label:t("common.close"),cls:"btn",act:closeModal}], true);
 
   const drop=document.getElementById("drop"), input=document.getElementById("iaInput");
+  const elegir=f=>{ if(f) handlePdfIA(f); };
   drop.onclick=()=>input.click();
-  input.onchange=()=>{ if(input.files[0]) handlePdfIA(input.files[0]); };
+  drop.onkeydown=e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); input.click(); } };
+  input.onchange=()=>{ elegir(input.files[0]); input.value=""; };   // value="" → se puede volver a elegir el mismo
   ["dragover","dragenter"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add("over");}));
   ["dragleave","drop"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove("over");}));
-  drop.addEventListener("drop",e=>{ const f=e.dataTransfer.files[0]; if(f) handlePdfIA(f); });
+  drop.addEventListener("drop",e=>{ elegir(e.dataTransfer.files[0]); });
+}
+/* Barra del archivo elegido. estado: "reading" | "local" | "ai" | "" */
+function impArchivo(file, estado){
+  const bar=document.getElementById("impFile"), drop=document.getElementById("drop");
+  if(!bar) return;
+  drop.hidden=true; bar.hidden=false;
+  const pill = estado==="local" ? `<span class="imp-pill pos">${t("imp.st.local")}</span>`
+             : estado==="ai"    ? `<span class="imp-pill ai">${t("imp.st.ai")}</span>`
+             : estado==="reading" ? `<span class="imp-pill">${t("imp.st.reading")}</span>` : "";
+  bar.innerHTML=`${ICO.pdf}<span class="imp-fname" title="${esc(file.name)}">${esc(file.name)}</span>${pill}`+
+    `<button type="button" class="btn ghost sm" id="impCambiar">${t("imp.change")}</button>`;
+  document.getElementById("impCambiar").onclick=()=> document.getElementById("iaInput").click();
+}
+/* "Continuar" vive en el pie del modal (al lado de Cerrar). */
+function impContinuar(onClick){
+  const viejo=document.getElementById("toDraft"); if(viejo) viejo.remove();
+  if(!onClick) return;
+  const foot=document.getElementById("mfoot"); if(!foot) return;
+  const der=foot.lastElementChild || foot;
+  const b=document.createElement("button");
+  b.type="button"; b.className="btn primary"; b.id="toDraft"; b.textContent=t("imp.continue");
+  b.onclick=onClick; der.appendChild(b);
 }
 
 /* Leer factura con Gemini (vía el Worker). Reusa el mismo editor de revisión que la detección local. */
@@ -74,17 +100,14 @@ function cuadreLectura(parsed, lines){
 function lecturaLocalCuadra(parsed, lines){
   return !!parsed && parsed.mode==="estructurado" && cuadreLectura(parsed, lines).ok;
 }
-/* Banner arriba del editor: cuánto suma lo leído vs. el total de la factura. */
-function avisoNoCuadra(out, c, leerConIA){
-  const b=document.createElement("div");
-  b.className="banner warn"; b.style.whiteSpace="normal";
+/* Cuadre de la lectura: verde si cierra contra el total; ámbar con la diferencia si no. */
+function htmlCuadre(c, conBotonIA){
+  if(!c) return "";
+  if(c.ok) return `<div class="banner pos">${ICO.check}<span>${t("imp.cuadra",{total:money(c.total||c.suma)})}</span></div>`;
   const dif = Math.round(((c.total||0)-(c.suma||0))*100)/100;
-  b.innerHTML = (c.total
-      ? t("imp.nocuadra",{sum:money(c.suma), total:money(c.total), diff:money(dif)})
-      : t("imp.nocuadra.sintotal"))
-    + (leerConIA ? ` <button type="button" class="btn sm" style="margin-left:8px">${ICO.sparkle}${t("imp.btn.ai")}</button>` : "");
-  if(leerConIA) b.querySelector("button").onclick=leerConIA;
-  out.prepend(b);
+  const txt = c.total ? t("imp.nocuadra",{sum:money(c.suma), total:money(c.total), diff:money(dif)}) : t("imp.nocuadra.sintotal");
+  return `<div class="banner warn imp-nocuadra">${ICO.warn}<span>${txt}</span>`+
+    (conBotonIA ? `<button type="button" class="btn sm" id="impLeerIA">${ICO.sparkle}${t("imp.btn.ai")}</button>` : "")+`</div>`;
 }
 function textoParaIA(lines){
   const txt=(lines||[]).join("\n");
@@ -97,10 +120,12 @@ async function pedirIA(cuerpo){
 }
 async function handlePdfIA(file, forzarIA){
   const out=document.getElementById("importOut");
+  impContinuar(null);
   if(!session){ out.innerHTML=`<div class="banner warn">${t("imp.needlogin")}</div>`; return; }
 
   // ---- 1) Lectura local ----
-  out.innerHTML=`<p style="color:var(--muted);padding:14px 0">${t("imp.reading.local",{file:esc(file.name)})}</p>`;
+  impArchivo(file, "reading");
+  out.innerHTML=`<p class="ai-reading">${ICO.sparkle}<span>${t("imp.reading.local",{file:esc(file.name)})}</span></p>`;
   let lines=null;
   try{
     lines = await extraerLineasPdf(file);
@@ -108,10 +133,11 @@ async function handlePdfIA(file, forzarIA){
     if(!forzarIA && parsed.mode==="estructurado" && parsed.items.length){
       // v120: formato reconocido. Si cuadra, listo; si no, se muestra igual AL INSTANTE con la
       // diferencia a la vista y la opción de leerla con IA (antes: 30 s de espera sin explicación).
-      const c = cuadreLectura(parsed, lines);
       pdfLines = lines;
+      parsed.cuadre = cuadreLectura(parsed, lines);
+      parsed.leerConIA = ()=> handlePdfIA(file, true);
+      impArchivo(file, "local");
       showImportEditor(file.name, parsed);
-      if(!c.ok) avisoNoCuadra(out, c, ()=> handlePdfIA(file, true));
       return;
     }
   }catch(e){ console.warn("lectura local:", e); lines=null; }
@@ -139,12 +165,14 @@ async function handlePdfIA(file, forzarIA){
     const { res, j }=r;
     if(!res.ok || !j.ok){
       const det = esc(srvErrText(j,res.status));
+      impArchivo(file,"");
       out.innerHTML=`<div class="banner warn">${t("imp.err.ai",{det})}</div>`;
       return;
     }
     const d=j.data||{};
     const lineas=Array.isArray(d.lineas)?d.lineas:[];
     if(!lineas.length){
+      impArchivo(file,"");
       out.innerHTML=`<div class="banner warn">${t("imp.err.nolines")}</div>`;
       return;
     }
@@ -164,10 +192,12 @@ async function handlePdfIA(file, forzarIA){
       mode:"ia"
     };
     pdfLines = (lines && lines.length) ? lines : [t("imp.rawai")];
+    if(j.cuadra===true || j.cuadra===false) parsed.cuadre = { ok:j.cuadra, suma:j.suma||0, total:j.total||0 };
+    impArchivo(file, "ai");
     showImportEditor(file.name, parsed);
-    if(j.cuadra===false) avisoNoCuadra(out, { suma:j.suma||0, total:j.total||0 }, null);
   }catch(e){
     console.error(e);
+    impArchivo(file,"");
     out.innerHTML=`<div class="banner warn">${t("imp.err.aifail",{err:esc(e.message||"error")})}</div>`;
   }finally{
     clearInterval(reloj);
@@ -370,27 +400,24 @@ function showImportEditor(fname, parsed){
     <td class="col-target" style="min-width:170px"><select class="inp" data-imp="prod" data-i="${i}">${prodOptions(c.productoId)}</select></td>
   </tr>`).join("");
 
-  const metaBits = [
-    meta.numero ? t("imp.meta.num",{v:esc(meta.numero)}) : "",
-    meta.fecha ? t("imp.meta.date",{v:esc(meta.fecha)}) : "",
-    meta.proveedor ? t("imp.meta.supplier",{v:esc(meta.proveedor)}) : ""
-  ].filter(Boolean).join(" · ");
+  const dato=(k,v)=>`<div><p class="k">${t(k)}</p><p class="v">${v?esc(v):'<span class="u-muted">—</span>'}</p></div>`;
+  const extra=(meta.flete||0)+(meta.handling||0);
 
   out.innerHTML=`
-    <div class="banner ok">
-      ${t("imp.detected",{n:items.length, file:esc(fname), meta:metaBits?` \u00B7 <span class="u-fw400">${metaBits}</span>`:""})}
+    <div class="imp-meta">
+      ${dato("imp.m.supplier", meta.proveedor)}${dato("imp.m.num", meta.numero)}
+      ${dato("imp.m.date", meta.fecha ? fmtDate(meta.fecha) : "")}${dato("imp.m.lines", String(items.length))}
     </div>
-    ${(meta.flete||meta.handling)? `<div class="banner" style="white-space:normal">${t("imp.freight",{amount:money((meta.flete||0)+(meta.handling||0))})}</div>`:""}
+    ${htmlCuadre(parsed.cuadre, !!parsed.leerConIA)}
+    ${extra ? `<div class="banner info">${ICO.truck}<span>${t("imp.freight",{amount:money(extra)})}</span></div>` : ""}
     <p class="u-fs-xs u-muted u-m0 u-mb2">
       ${t("imp.costhint")}
     </p>
     <div class="table-scroll"><table class="line-tbl${SHOW_TARGET_PRODUCT_COL?'':' hide-target'}">
       <thead><tr><th class="c">✓</th><th class="c">SKU</th><th>${t("imp.th.desc")}</th><th class="r">${t("imp.th.qty")}</th><th class="r">${t("imp.th.cost")}</th><th class="r">${t("imp.th.listprice")}</th><th class="col-target">${t("imp.th.target")}</th></tr></thead>
       <tbody>${rows}</tbody></table></div>
-    <details><summary>${t("imp.viewraw")}</summary><div class="rawbox">${esc(pdfLines.join("\n"))}</div></details>
-    <div style="display:flex;justify-content:flex-end;margin-top:16px">
-      <button class="btn primary" id="toDraft">${t("imp.continue")}</button>
-    </div>`;
+    <details><summary>${t("imp.viewraw")}</summary><div class="rawbox">${esc(pdfLines.join("\n"))}</div></details>`;
+  const bIA=document.getElementById("impLeerIA"); if(bIA && parsed.leerConIA) bIA.onclick=parsed.leerConIA;
 
   out.querySelectorAll("[data-sel]").forEach(cb=> cb.onchange=()=> items[+cb.dataset.sel].sel=cb.checked);
   out.querySelectorAll("[data-imp]").forEach(inp=>{
@@ -406,7 +433,7 @@ function showImportEditor(fname, parsed){
       }
     };
   });
-  document.getElementById("toDraft").onclick=()=>{
+  impContinuar(()=>{
     const chosen=items.filter(c=>c.sel && c.cantidad>0);
     if(!chosen.length){ toast(t("imp.tt.tickone"),"warn"); return; }
     const lineas=chosen.map(c=>({
@@ -419,6 +446,6 @@ function showImportEditor(fname, parsed){
       cantidad:c.cantidad, precio:c.costo
     }));
     openDoc("compra", { tipo:"compra", contraparte:meta.proveedor||"", fecha:meta.fecha||isoLocal(new Date()), numero:meta.numero||"", handling:meta.handling||0, flete:meta.flete||0, lineas });
-  };
+  });
 }
 
