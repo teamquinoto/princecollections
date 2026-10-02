@@ -68,5 +68,10 @@
     warn:    S('<path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/>')
   };
 
+  /* v118: catálogo público — compartir, flecha del desplegable y WhatsApp (globo de chat) */
+  ICO.share    = S('<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/>');
+  ICO.chevDown = S('<path d="M6 9l6 6 6-6"/>');
+  ICO.whatsapp = S('<path d="M3 21l1.7-5A8.5 8.5 0 1 1 8 19.3L3 21z"/><path d="M9 9.5c0 3 2.5 5.5 5.5 5.5l1-1.5-2-1-1 .8a4 4 0 0 1-1.8-1.8l.8-1-1-2L9 9.5z"/>');
+
   window.ICO = ICO;
 })();

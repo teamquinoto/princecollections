@@ -7,7 +7,7 @@ function viewProd(){
   <div class="head">
     <div class="title"><h2>${t("pr.title")}</h2><p>${t("pr.sub")}</p></div>
     <div class="actions">
-      ${(total&&isAdmin())?`<button type="button" class="btn icon-only" id="btnCatalogo" style="padding:9px 11px" title="${esc(t("pr.btn.catalog.tt"))}" aria-label="${esc(t("pr.btn.catalog"))}">${ICO.copy}</button>`:""}
+      ${(total&&isAdmin())?catalogoShareHTML():""}
       ${total?`<button class="btn" id="btnExpPrecios">${ICO.price}${t("pr.btn.pricelist")}</button>`:""}
       ${(total&&isAdmin())?`<button class="btn" id="btnSel">${selMode?ICO.x+t("common.cancel"):ICO.select+t("pr.btn.select")}</button>`:""}
       ${puedeEditarProductos()?`<button class="btn primary" data-newp>${ICO.plus}${t("pr.btn.newprod")}</button>`:""}
@@ -137,7 +137,33 @@ async function copiarLinkCatalogo(){
   if(ok) toast(t("pr.tt.catalogcopied"));
   else window.prompt(t("pr.btn.catalog"), url);   // fallback: que lo copie a mano
 }
-document.addEventListener("click", e=>{ if(e.target.closest && e.target.closest("#btnCatalogo")) copiarLinkCatalogo(); });
+/* v118: botón "Compartir catálogo" (verde, con pill "Público") + menú con 3 acciones.
+   Reusa el overflow genérico (data-ovf + .ovf-menu de 22-ui-modales.js): abrir, cerrar,
+   Escape, click afuera y posición fixed ya los maneja ese módulo. Acá sólo van las acciones. */
+function catalogoShareHTML(){
+  return `<div class="rowovf cat-share">`+
+    `<button type="button" class="btn cat-share-btn" data-ovf aria-haspopup="true" aria-expanded="false" title="${esc(t("pr.btn.catalog.tt"))}">`+
+      `${ICO.share}<span>${t("pr.cat.share")}</span><span class="cat-share-pill">${t("pr.cat.public")}</span>${ICO.chevDown}`+
+    `</button>`+
+    `<div class="ovf-menu" hidden>`+
+      `<button type="button" class="btn ghost sm" data-cat="copy">${ICO.copy}${t("pr.cat.copy")}</button>`+
+      `<button type="button" class="btn ghost sm" data-cat="open">${ICO.arrowOut}${t("pr.cat.open")}</button>`+
+      `<button type="button" class="btn ghost sm" data-cat="wa">${ICO.whatsapp}${t("pr.cat.wa")}</button>`+
+    `</div></div>`;
+}
+function abrirCatalogo(){ window.open(catalogoUrl(), "_blank", "noopener"); }
+function enviarCatalogoWhatsApp(){
+  const msg = t("pr.cat.wamsg", { url: catalogoUrl() });
+  window.open("https://wa.me/?text="+encodeURIComponent(msg), "_blank", "noopener");
+}
+document.addEventListener("click", e=>{
+  const b = e.target.closest && e.target.closest("[data-cat]");
+  if(!b) return;
+  const a = b.getAttribute("data-cat");
+  if(a==="copy") copiarLinkCatalogo();
+  else if(a==="open") abrirCatalogo();
+  else if(a==="wa") enviarCatalogoWhatsApp();
+});
 
 /* v88: misma limpieza que hace el Worker para el catálogo (worker.js → limpiarNombrePublico).
    Acá sólo se usa para SUGERIR en la ficha qué va a ver el cliente si no cargás nada. */
