@@ -339,7 +339,7 @@ function openAjuste(prodId){
   if(!puedeAjustar()){ toast(t("md.err.adminajuste"),"warn"); return; }
   adjDraft = { productoId: prodId||"", store: effectiveStores()[0]||STORE_IDS[0], modo:"delta", cantidad:"", fecha:isoLocal(new Date()), obs:"" };
   renderAjuste();
-  if(!adjDraft.productoId) setTimeout(()=>{ const b=document.getElementById("aj_prod"); if(b) openAjustePicker(b); }, 60);
+  // v127: el buscador ya NO se abre solo; se abre al tocar el campo Producto.
 }
 /* v124: modal más amplio + producto con BUSCADOR (antes un <select> con todo el catálogo).
    Se re-dibuja sólo al cambiar producto / sociedad / tipo; al tipear la cantidad se
