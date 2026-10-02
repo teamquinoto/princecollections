@@ -57,14 +57,34 @@ function totalesDelTexto(blob){
   while((m=re.exec(blob))){ const n=parseNum(m[1]); if(n>0) out.push(n); }
   return out;
 }
-function lecturaLocalCuadra(parsed, lines){
-  if(!parsed || parsed.mode!=="estructurado" || !parsed.items.length) return false;
+/* v120: devuelve { ok, suma, total }. suma = líneas + flete + handling (cargos). */
+function cuadreLectura(parsed, lines){
+  const r={ ok:false, suma:0, total:0 };
+  if(!parsed || !parsed.items.length) return r;
+  const m=parsed.meta||{};
+  const lineas = parsed.items.reduce((a,it)=>a+(it.ext||0),0);
+  r.suma = Math.round((lineas + (m.flete||0) + (m.handling||0))*100)/100;
+  const tots = totalesDelTexto((lines||[]).join("\n"));
+  r.total = tots.length ? Math.max(...tots) : 0;
   const lineasOk = parsed.items.every(it=> it.cantidad>0 &&
     Math.abs(it.cantidad*it.costo - it.ext) <= Math.max(0.02, Math.abs(it.ext)*0.001));
-  if(!lineasOk) return false;
-  const suma = parsed.items.reduce((a,it)=>a+it.ext,0);
-  const flete = parsed.meta.flete||0;
-  return totalesDelTexto(lines.join("\n")).some(T=> Math.abs(T-(suma+flete))<=0.02 || Math.abs(T-suma)<=0.02);
+  r.ok = lineasOk && tots.some(T=> Math.abs(T-r.suma)<=0.02 || Math.abs(T-lineas)<=0.02);
+  return r;
+}
+function lecturaLocalCuadra(parsed, lines){
+  return !!parsed && parsed.mode==="estructurado" && cuadreLectura(parsed, lines).ok;
+}
+/* Banner arriba del editor: cuánto suma lo leído vs. el total de la factura. */
+function avisoNoCuadra(out, c, leerConIA){
+  const b=document.createElement("div");
+  b.className="banner warn"; b.style.whiteSpace="normal";
+  const dif = Math.round(((c.total||0)-(c.suma||0))*100)/100;
+  b.innerHTML = (c.total
+      ? t("imp.nocuadra",{sum:money(c.suma), total:money(c.total), diff:money(dif)})
+      : t("imp.nocuadra.sintotal"))
+    + (leerConIA ? ` <button type="button" class="btn sm" style="margin-left:8px">${ICO.sparkle}${t("imp.btn.ai")}</button>` : "");
+  if(leerConIA) b.querySelector("button").onclick=leerConIA;
+  out.prepend(b);
 }
 function textoParaIA(lines){
   const txt=(lines||[]).join("\n");
@@ -75,7 +95,7 @@ async function pedirIA(cuerpo){
   let j=null; try{ j=await res.json(); }catch(_){}
   return { res, j: j||{} };
 }
-async function handlePdfIA(file){
+async function handlePdfIA(file, forzarIA){
   const out=document.getElementById("importOut");
   if(!session){ out.innerHTML=`<div class="banner warn">${t("imp.needlogin")}</div>`; return; }
 
@@ -85,9 +105,13 @@ async function handlePdfIA(file){
   try{
     lines = await extraerLineasPdf(file);
     const parsed = parseInvoice(lines);
-    if(lecturaLocalCuadra(parsed, lines)){
+    if(!forzarIA && parsed.mode==="estructurado" && parsed.items.length){
+      // v120: formato reconocido. Si cuadra, listo; si no, se muestra igual AL INSTANTE con la
+      // diferencia a la vista y la opción de leerla con IA (antes: 30 s de espera sin explicación).
+      const c = cuadreLectura(parsed, lines);
       pdfLines = lines;
       showImportEditor(file.name, parsed);
+      if(!c.ok) avisoNoCuadra(out, c, ()=> handlePdfIA(file, true));
       return;
     }
   }catch(e){ console.warn("lectura local:", e); lines=null; }
@@ -126,7 +150,8 @@ async function handlePdfIA(file){
     }
     // adaptar a la estructura que consume showImportEditor
     const parsed={
-      meta:{ numero:d.numero||"", fecha:normFechaIA(d.fecha), proveedor:d.proveedor||"", flete:parseNum(d.flete)||0, moneda:d.moneda||"" },
+      meta:{ numero:d.numero||"", fecha:normFechaIA(d.fecha), proveedor:d.proveedor||"", flete:parseNum(d.flete)||0,
+             handling:parseNum(d.cargos)||0, moneda:d.moneda||"" },
       items:lineas.map(l=>({
         sku:(l.sku||"").toString().trim(),
         desc:(l.nombre||"").toString().trim(),
@@ -140,6 +165,7 @@ async function handlePdfIA(file){
     };
     pdfLines = (lines && lines.length) ? lines : [t("imp.rawai")];
     showImportEditor(file.name, parsed);
+    if(j.cuadra===false) avisoNoCuadra(out, { suma:j.suma||0, total:j.total||0 }, null);
   }catch(e){
     console.error(e);
     out.innerHTML=`<div class="banner warn">${t("imp.err.aifail",{err:esc(e.message||"error")})}</div>`;
@@ -212,6 +238,7 @@ function parseInvoice(lines){
   // detectar flete/handling para avisar (no se agrega como stock)
   const fre = blob.match(/(freight[^\n]*?|flete[^\n]*?)\s([\d.,]+)\s*$/im) || blob.match(/freight[^\d]*([\d.,]+)/i);
   meta.flete = fre ? parseNum(fre[fre.length-1]) : 0;
+  meta.handling = Math.round(((items && items.cargos) || 0)*100)/100;   // v120: fees/cargos sin producto
   return { meta, items, mode };
 }
 
@@ -228,9 +255,15 @@ function parseStructuredLineas(lines){
   const re = new RegExp("(?=[A-Z0-9\\-]*\\d)([A-Z0-9][A-Z0-9\\-]{3,}):\\s*(.+?)\\s+(\\d+(?:[.,]\\d+)?)\\s+"+RE_UOM+"\\s+([\\d.,]+)\\s+([\\d.,]+)\\s+([\\d.,]+)(?=\\s|$)","i");
   const otroItem = new RegExp("\\d\\s+"+RE_UOM+"\\s+[\\d.,]","i");
   const corte = /^(note|nota|a late charge|sales total|tax total|sub\s*total|total|page|p[aá]gina|invoice|reference|date|bill to|ship to|no\.\s*item|customer|so type)\b/i;
+  /* v120: renglón de CARGO con el mismo formato pero código sin números (ZZZFEES: Handling Fees).
+     No es mercadería: su importe se suma como handling de la compra (se prorratea en el costo). */
+  const reCargo = new RegExp("^(?:\\d+\\s+)?([A-Z][A-Z\\-]{2,}):\\s*(.+?)\\s+(\\d+(?:[.,]\\d+)?)\\s+"+RE_UOM+"\\s+([\\d.,]+)\\s+([\\d.,]+)\\s+([\\d.,]+)\\s*$","i");
   const out=[]; let ultimo=null, extra=0;
+  out.cargos=0;
   for(const raw of lines){
     const l=raw.trim();
+    const mc=l.match(reCargo);
+    if(mc && !/\d/.test(mc[1])){ out.cargos += parseNum(mc[7]); ultimo=null; continue; }
     const m=l.match(re);
     if(m){
       const cantidad=parseNum(m[3]);
@@ -347,7 +380,7 @@ function showImportEditor(fname, parsed){
     <div class="banner ok">
       ${t("imp.detected",{n:items.length, file:esc(fname), meta:metaBits?` \u00B7 <span class="u-fw400">${metaBits}</span>`:""})}
     </div>
-    ${meta.flete? `<div class="banner" style="white-space:normal">${t("imp.freight",{amount:money(meta.flete)})}</div>`:""}
+    ${(meta.flete||meta.handling)? `<div class="banner" style="white-space:normal">${t("imp.freight",{amount:money((meta.flete||0)+(meta.handling||0))})}</div>`:""}
     <p class="u-fs-xs u-muted u-m0 u-mb2">
       ${t("imp.costhint")}
     </p>
@@ -385,7 +418,7 @@ function showImportEditor(fname, parsed){
       precioVentaSugerido: c.msrp||0,
       cantidad:c.cantidad, precio:c.costo
     }));
-    openDoc("compra", { tipo:"compra", contraparte:meta.proveedor||"", fecha:meta.fecha||isoLocal(new Date()), numero:meta.numero||"", handling:0, flete:meta.flete||0, lineas });
+    openDoc("compra", { tipo:"compra", contraparte:meta.proveedor||"", fecha:meta.fecha||isoLocal(new Date()), numero:meta.numero||"", handling:meta.handling||0, flete:meta.flete||0, lineas });
   };
 }
 
