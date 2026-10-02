@@ -1467,3 +1467,32 @@ select.inp.bad{border-color:var(--down)}
 .cat-share-pill{font-size:var(--fs-xs);font-weight:600;line-height:1;padding:3px 7px;border-radius:var(--r-pill);
   background:color-mix(in srgb,var(--pos) 20%,transparent);color:var(--pos)}
 .cat-share .ovf-menu{min-width:210px}
+
+/* v121 · Avisos (.banner): eran flex, así que cada <b> del texto quedaba como una
+   columna suelta ("antes de confirmar" colgando a la derecha, texto apretado).
+   Sin ícono → bloque normal. Con ícono → ícono + UN span de texto que ocupa el resto. */
+.banner:not(:has(> svg)){display:block}
+.banner > span{flex:1;min-width:0}
+.banner > svg.i{width:18px;height:18px;flex-shrink:0;margin-top:1px}
+.banner.pos{background:var(--pos-bg);color:var(--pos);border:1px solid color-mix(in srgb,var(--pos) 30%,transparent)}
+
+/* v121 · Importar factura */
+.imp-intro{font-size:var(--fs-md);line-height:1.55;color:var(--text);margin:0 0 14px}
+.drop[hidden],.imp-fbar[hidden]{display:none!important}
+.imp-fbar{display:flex;align-items:center;gap:10px;border:1px solid var(--line);background:var(--surface-2);
+  border-radius:var(--r-md);padding:6px 6px 6px 12px;margin-bottom:12px}
+.imp-fbar > svg.i{width:18px;height:18px;color:var(--muted);flex-shrink:0}
+.imp-fname{flex:1;min-width:0;font-weight:600;font-size:var(--fs-md);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.imp-pill{font-size:var(--fs-xs);font-weight:600;line-height:1;padding:5px 9px;border-radius:var(--r-pill);white-space:nowrap;
+  background:var(--surface);color:var(--muted);border:1px solid var(--line)}
+.imp-pill.pos{background:var(--pos-bg);color:var(--pos);border-color:transparent}
+.imp-pill.ai{background:var(--up-bg);color:var(--accent-ink);border-color:transparent}
+.imp-meta{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:var(--line);
+  border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden;margin-bottom:12px}
+.imp-meta > div{background:var(--surface);padding:9px 12px;min-width:0}
+.imp-meta .k{font-size:var(--fs-xs);color:var(--muted);margin:0 0 2px}
+.imp-meta .v{font-size:var(--fs-md);font-weight:600;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.imp-nocuadra{align-items:center;flex-wrap:wrap}
+.imp-nocuadra .btn{flex-shrink:0}
+@media (max-width:600px){ .imp-meta{grid-template-columns:repeat(2,minmax(0,1fr))} }
+
