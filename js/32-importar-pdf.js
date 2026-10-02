@@ -33,17 +33,86 @@ function fileToBase64(file){
     r.readAsDataURL(file);
   });
 }
+/* v119 · Lectura en 2 pasos (antes: siempre IA, 30-45 s por factura).
+   1) LOCAL (~1 s): pdf.js saca el texto y el parser estructurado arma las líneas. Si la
+      lectura CUADRA (cada línea: cantidad × precio = importe, y la suma + flete = total de
+      la factura), se usa directo, sin IA. Es el mismo control que haría un auditor.
+   2) IA sólo si no cuadra o el PDF no tiene texto (escaneado). Si hay texto, se manda el
+      TEXTO (mucho más liviano que el PDF); si la IA no saca líneas, se reintenta con el PDF. */
+async function extraerLineasPdf(file){
+  await libCargar("pdfjs");
+  const buf=await file.arrayBuffer();
+  const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+  let lines=[];
+  for(let pn=1; pn<=pdf.numPages; pn++){
+    const page=await pdf.getPage(pn);
+    const tc=await page.getTextContent();
+    lines = lines.concat(reconstructLines(tc.items));
+  }
+  return lines.filter(l=>l.trim().length);
+}
+/* Importes que aparecen después de la palabra "total" (Sales Total, Total (USD), Subtotal…) */
+function totalesDelTexto(blob){
+  const out=[], re=/total\b[^\d\n]{0,25}?(\d[\d.,]*)/gi; let m;
+  while((m=re.exec(blob))){ const n=parseNum(m[1]); if(n>0) out.push(n); }
+  return out;
+}
+function lecturaLocalCuadra(parsed, lines){
+  if(!parsed || parsed.mode!=="estructurado" || !parsed.items.length) return false;
+  const lineasOk = parsed.items.every(it=> it.cantidad>0 &&
+    Math.abs(it.cantidad*it.costo - it.ext) <= Math.max(0.02, Math.abs(it.ext)*0.001));
+  if(!lineasOk) return false;
+  const suma = parsed.items.reduce((a,it)=>a+it.ext,0);
+  const flete = parsed.meta.flete||0;
+  return totalesDelTexto(lines.join("\n")).some(T=> Math.abs(T-(suma+flete))<=0.02 || Math.abs(T-suma)<=0.02);
+}
+function textoParaIA(lines){
+  const txt=(lines||[]).join("\n");
+  return txt.replace(/\s/g,"").length>=150 ? txt.slice(0,60000) : "";
+}
+async function pedirIA(cuerpo){
+  const res=await apiFetch(apiBase()+"/parse-invoice",{ method:"POST", headers:authHeaders(), body:JSON.stringify(cuerpo) });
+  let j=null; try{ j=await res.json(); }catch(_){}
+  return { res, j: j||{} };
+}
 async function handlePdfIA(file){
   const out=document.getElementById("importOut");
   if(!session){ out.innerHTML=`<div class="banner warn">${t("imp.needlogin")}</div>`; return; }
-  out.innerHTML=`<p class="ai-reading">${ICO.sparkle}<span>${t("imp.reading.ai",{file:esc(file.name)})}</span></p>`;
+
+  // ---- 1) Lectura local ----
+  out.innerHTML=`<p style="color:var(--muted);padding:14px 0">${t("imp.reading.local",{file:esc(file.name)})}</p>`;
+  let lines=null;
   try{
-    const b64=await fileToBase64(file);
-    const res=await apiFetch(apiBase()+"/parse-invoice",{
-      method:"POST", headers:authHeaders(),
-      body:JSON.stringify({ pdf:b64, mime:file.type||"application/pdf" })
-    });
-    const j=await res.json();
+    lines = await extraerLineasPdf(file);
+    const parsed = parseInvoice(lines);
+    if(lecturaLocalCuadra(parsed, lines)){
+      pdfLines = lines;
+      showImportEditor(file.name, parsed);
+      return;
+    }
+  }catch(e){ console.warn("lectura local:", e); lines=null; }
+
+  // ---- 2) IA (con contador de segundos para que se vea que avanza) ----
+  const t0=Date.now();
+  out.innerHTML=`<p class="ai-reading">${ICO.sparkle}<span>${t("imp.reading.ai",{file:esc(file.name)})}</span><span class="u-muted" id="iaSecs"></span></p>`;
+  const reloj=setInterval(()=>{
+    const el=document.getElementById("iaSecs");
+    if(el) el.textContent=" · "+Math.round((Date.now()-t0)/1000)+" s"; else clearInterval(reloj);
+  },1000);
+  try{
+    let r=null;
+    const texto=textoParaIA(lines);
+    if(texto){
+      r=await pedirIA({ texto });
+      const sinLineas = r.res.ok && r.j.ok && !(r.j.data && Array.isArray(r.j.data.lineas) && r.j.data.lineas.length);
+      const workerViejo = r.res.status===400 && /missing 'pdf'/.test(String(r.j.error||""));
+      if(sinLineas || workerViejo) r=null;          // se reintenta con el PDF
+    }
+    if(!r){
+      const b64=await fileToBase64(file);
+      r=await pedirIA({ pdf:b64, mime:file.type||"application/pdf" });
+    }
+    const { res, j }=r;
     if(!res.ok || !j.ok){
       const det = esc(srvErrText(j,res.status));
       out.innerHTML=`<div class="banner warn">${t("imp.err.ai",{det})}</div>`;
@@ -69,11 +138,13 @@ async function handlePdfIA(file){
       })).filter(it=>it.desc),
       mode:"ia"
     };
-    pdfLines=[t("imp.rawai")];
+    pdfLines = (lines && lines.length) ? lines : [t("imp.rawai")];
     showImportEditor(file.name, parsed);
   }catch(e){
     console.error(e);
     out.innerHTML=`<div class="banner warn">${t("imp.err.aifail",{err:esc(e.message||"error")})}</div>`;
+  }finally{
+    clearInterval(reloj);
   }
 }
 /* Normaliza fecha devuelta por la IA a YYYY-MM-DD si viene en otro formato reconocible */
@@ -144,9 +215,44 @@ function parseInvoice(lines){
   return { meta, items, mode };
 }
 
-/* SKU: desc ... QTY UOM MSRP NET EXT  (UOM = EACH/EA/CASE/BOX/PACK/UNIT/PCS) */
+/* SKU: desc ... QTY UOM MSRP NET EXT  (UOM = EACH/EA/CASE/BOX/PACK/UNIT/PCS)
+   v119: primero renglón por renglón, sumando a la descripción los renglones de abajo cuando
+   el nombre del producto ocupa 2 o 3 líneas (antes quedaba cortado: "Riftbound TCG: Set 1-").
+   Si así no encuentra nada, cae al método anterior sobre el texto corrido. */
+const RE_UOM = "(EACH|EA|CASE|BOX|PACK|UNIT|PCS?|UN)";
 function parseStructured(blob){
-  const re = /(?=[A-Z0-9\-]*\d)([A-Z0-9][A-Z0-9\-]{3,}):\s*([\s\S]+?)\s+(\d+(?:[.,]\d+)?)\s+(EACH|EA|CASE|BOX|PACK|UNIT|PCS?|UN)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)(?=\s|$)/gi;
+  const porRenglon = parseStructuredLineas(blob.split("\n"));
+  return porRenglon.length ? porRenglon : parseStructuredBlob(blob);
+}
+function parseStructuredLineas(lines){
+  const re = new RegExp("(?=[A-Z0-9\\-]*\\d)([A-Z0-9][A-Z0-9\\-]{3,}):\\s*(.+?)\\s+(\\d+(?:[.,]\\d+)?)\\s+"+RE_UOM+"\\s+([\\d.,]+)\\s+([\\d.,]+)\\s+([\\d.,]+)(?=\\s|$)","i");
+  const otroItem = new RegExp("\\d\\s+"+RE_UOM+"\\s+[\\d.,]","i");
+  const corte = /^(note|nota|a late charge|sales total|tax total|sub\s*total|total|page|p[aá]gina|invoice|reference|date|bill to|ship to|no\.\s*item|customer|so type)\b/i;
+  const out=[]; let ultimo=null, extra=0;
+  for(const raw of lines){
+    const l=raw.trim();
+    const m=l.match(re);
+    if(m){
+      const cantidad=parseNum(m[3]);
+      ultimo=null; extra=0;
+      if(cantidad<=0) continue;
+      ultimo={ sku:m[1].trim(), desc:m[2].replace(/\s+/g," ").trim(), cantidad,
+               costo:parseNum(m[6]), msrp:parseNum(m[5]), ext:parseNum(m[7]),
+               raw:(m[1]+": "+m[2]+" | "+m[3]+" "+m[4]+" "+m[5]+" "+m[6]+" "+m[7]) };
+      out.push(ultimo);
+      continue;
+    }
+    // Renglón de continuación del nombre: sólo texto, hasta 3 renglones, sin cabeceras ni totales.
+    if(ultimo && l && extra<3 && /[A-Za-z]/.test(l) && !corte.test(l) && !otroItem.test(l) && !/^\d+\s+\S+:/.test(l)){
+      ultimo.desc += " "+l; extra++;
+      continue;
+    }
+    ultimo=null;
+  }
+  return out;
+}
+function parseStructuredBlob(blob){
+  const re = new RegExp("(?=[A-Z0-9\\-]*\\d)([A-Z0-9][A-Z0-9\\-]{3,}):\\s*([\\s\\S]+?)\\s+(\\d+(?:[.,]\\d+)?)\\s+"+RE_UOM+"\\s+([\\d.,]+)\\s+([\\d.,]+)\\s+([\\d.,]+)(?=\\s|$)","gi");
   const out=[]; let m;
   while((m=re.exec(blob))){
     const sku = m[1].trim();
