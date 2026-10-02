@@ -284,7 +284,9 @@ function parseStructured(blob){
 function parseStructuredLineas(lines){
   const re = new RegExp("(?=[A-Z0-9\\-]*\\d)([A-Z0-9][A-Z0-9\\-]{3,}):\\s*(.+?)\\s+(\\d+(?:[.,]\\d+)?)\\s+"+RE_UOM+"\\s+([\\d.,]+)\\s+([\\d.,]+)\\s+([\\d.,]+)(?=\\s|$)","i");
   const otroItem = new RegExp("\\d\\s+"+RE_UOM+"\\s+[\\d.,]","i");
-  const corte = /^(note|nota|a late charge|sales total|tax total|sub\s*total|total|page|p[aá]gina|invoice|reference|date|bill to|ship to|no\.\s*item|customer|so type)\b/i;
+  const corte = /^(note|nota|a late charge|sales total|tax total|sub\s*total|total|page|p[aá]gina|continued|contin[uú]a|invoice|reference|date|bill to|ship to|no\.\s*item|customer|so type)\b/i;
+  // v122: pie de página en el medio del renglón ("Continued... Page: 1 of 2"): corta la continuación.
+  const pie = /\b(page|p[aá]gina)\s*:?\s*\d+\s*(of|de)\s*\d+/i;
   /* v120: renglón de CARGO con el mismo formato pero código sin números (ZZZFEES: Handling Fees).
      No es mercadería: su importe se suma como handling de la compra (se prorratea en el costo). */
   const reCargo = new RegExp("^(?:\\d+\\s+)?([A-Z][A-Z\\-]{2,}):\\s*(.+?)\\s+(\\d+(?:[.,]\\d+)?)\\s+"+RE_UOM+"\\s+([\\d.,]+)\\s+([\\d.,]+)\\s+([\\d.,]+)\\s*$","i");
@@ -306,7 +308,7 @@ function parseStructuredLineas(lines){
       continue;
     }
     // Renglón de continuación del nombre: sólo texto, hasta 3 renglones, sin cabeceras ni totales.
-    if(ultimo && l && extra<3 && /[A-Za-z]/.test(l) && !corte.test(l) && !otroItem.test(l) && !/^\d+\s+\S+:/.test(l)){
+    if(ultimo && l && extra<3 && /[A-Za-z]/.test(l) && !corte.test(l) && !pie.test(l) && !otroItem.test(l) && !/^\d+\s+\S+:/.test(l)){
       ultimo.desc += " "+l; extra++;
       continue;
     }
