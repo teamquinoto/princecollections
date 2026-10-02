@@ -339,64 +339,111 @@ function openAjuste(prodId){
   if(!puedeAjustar()){ toast(t("md.err.adminajuste"),"warn"); return; }
   adjDraft = { productoId: prodId||"", store: effectiveStores()[0]||STORE_IDS[0], modo:"delta", cantidad:"", fecha:isoLocal(new Date()), obs:"" };
   renderAjuste();
+  if(!adjDraft.productoId) setTimeout(()=>{ const b=document.getElementById("aj_prod"); if(b) openAjustePicker(b); }, 60);
 }
+/* v124: modal más amplio + producto con BUSCADOR (antes un <select> con todo el catálogo).
+   Se re-dibuja sólo al cambiar producto / sociedad / tipo; al tipear la cantidad se
+   actualiza únicamente la vista previa (antes se re-armaba el modal en cada tecla). */
 function renderAjuste(){
   const p = prodById(adjDraft.productoId);
   const store = adjDraft.store;
-  const opts = `<option value="">${t("md.aj.pickprod")}</option>` +
-    db.productos.filter(x=>!soloEnVault(x)||isAdmin()).map(x=>`<option value="${x.id}" ${x.id===adjDraft.productoId?"selected":""}>${esc(x.sku?("["+x.sku+"] "):"")}${esc(x.nombre)}</option>`).join("");
-  const stockActual = p ? qty(stockDe(p, store)) : "—";
   const allowSt = allowedStores();
   const storeSel = allowSt.length>1
     ? `<select class="inp" id="aj_store">${allowSt.map(s=>`<option value="${s}" ${s===store?"selected":""}>${esc(storeName(s))}</option>`).join("")}</select>`
     : `<input class="inp" value="${esc(storeName(store))}" disabled>`;
-  let previewTxt = "";
-  if(p && adjDraft.cantidad!=="" && !isNaN(+adjDraft.cantidad)){
-    const cur = stockDe(p, store);
-    const nuevo = adjDraft.modo==="recuento" ? +adjDraft.cantidad : cur+(+adjDraft.cantidad);
-    const delta = nuevo-cur;
-    const col = delta===0?"var(--muted)":(delta>0?"var(--up-ink)":"var(--down-ink)");
-    previewTxt = `<div class="banner ${delta>=0?'ok':'warn'}" style="margin:2px 0 0">Stock: <b>${qty(cur)}</b> → <b>${qty(nuevo)}</b> <span style="color:${col}">(${delta>=0?'+':'−'}${qty(Math.abs(delta))})</span></div>`;
-  }
+  const btnProd = p
+    ? `${p.sku?`<span class="pb-sku">${esc(p.sku)}</span>`:""}<span class="pb-name" data-fullname="${esc(p.nombre)}">${esc(p.nombre)}</span>`
+    : `<span class="ppick-label">${t("md.aj.searchprod")}</span>`;
+  const ficha = p ? `<div class="aj-ficha">
+      <span>${t("md.aj.f.instore",{store:esc(storeName(store))})}: <b class="num">${qty(stockDe(p, store))}</b></span>
+      <span>${t("md.aj.f.total")}: <b class="num">${qty(p.stock||0)}</b></span>
+      <span>${t("md.aj.f.cost")}: <b class="num">${money(p.ultimoCosto||0)}</b></span>
+    </div>` : "";
   const body = `
-    <div class="u-cols2 u-p0 u-mb2 grid-form">
-      <div class="field"><label>${t("common.product")}</label>
-        <select class="inp" id="aj_prod">${opts}</select>
+    <div class="aj-grid">
+      <div class="field full"><label>${t("common.product")}</label>
+        <div class="ppick"><button type="button" class="ppick-btn aj-prodbtn${p?"":" placeholder"}" id="aj_prod">${btnProd}<span class="ppick-caret">▾</span></button></div>
+        ${ficha}
       </div>
-      <div class="field"><label>${t("md.lbl.society")}</label>${storeSel}
-        ${p?`<div class="u-fs-xs u-muted u-mt1">${t("md.aj.stockline",{n:'<b class="num">'+stockActual+'</b>',cost:money(p.ultimoCosto)})}</div>`:""}
-      </div>
+      <div class="field"><label>${t("md.lbl.society")}</label>${storeSel}</div>
       <div class="field"><label>${t("md.aj.type")}</label>
         <select class="inp" id="aj_modo">
           <option value="delta" ${adjDraft.modo==="delta"?"selected":""}>${t("md.aj.modo.delta")}</option>
           <option value="recuento" ${adjDraft.modo==="recuento"?"selected":""}>${t("md.aj.modo.count")}</option>
         </select>
       </div>
+      <div class="field"><label>${t("common.date")}</label><input class="inp" type="date" id="aj_fe" value="${esc(adjDraft.fecha)}"></div>
       <div class="field"><label>${adjDraft.modo==="recuento"?t("md.aj.countedstock"):t("md.aj.qty")}</label>
         <input class="inp num" id="aj_cant" type="number" step="any" value="${esc(adjDraft.cantidad)}" placeholder="0"></div>
-      <div class="field"><label>${t("common.date")}</label><input class="inp" type="date" id="aj_fe" value="${esc(adjDraft.fecha)}"></div>
-      <div class="field"><label>${t("md.aj.note")}</label><input class="inp" id="aj_obs" value="${esc(adjDraft.obs)}" placeholder="${t("md.aj.ph.note")}"></div>
+      <div class="field span2"><label>${t("md.aj.note")}</label><input class="inp" id="aj_obs" value="${esc(adjDraft.obs)}" placeholder="${t("md.aj.ph.note")}"></div>
     </div>
-    <div id="aj_prev">${previewTxt}</div>
+    <div id="aj_prev"></div>
   `;
   buildModal(t("md.aj.title"), body, [
-    {label:t("common.cancel"), cls:"btn", act:()=>{ adjDraft=null; closeModal(); }},
-    {label:t("md.aj.record"), cls:"btn", act:confirmAjuste}
-  ]);
-  const sync=()=>{
-    adjDraft.productoId=document.getElementById("aj_prod").value;
-    const st=document.getElementById("aj_store"); if(st) adjDraft.store=st.value;
-    adjDraft.modo=document.getElementById("aj_modo").value;
-    adjDraft.cantidad=document.getElementById("aj_cant").value;
-    adjDraft.fecha=document.getElementById("aj_fe").value;
-    adjDraft.obs=document.getElementById("aj_obs").value;
-  };
-  document.getElementById("aj_prod").onchange=()=>{ sync(); renderAjuste(); };
-  const st=document.getElementById("aj_store"); if(st) st.onchange=()=>{ sync(); renderAjuste(); };
-  document.getElementById("aj_modo").onchange=()=>{ sync(); renderAjuste(); };
-  document.getElementById("aj_cant").oninput=()=>{ sync(); renderAjuste(); document.getElementById("aj_cant").focus(); };
+    {label:t("common.cancel"), cls:"btn", act:()=>{ adjDraft=null; closeProductPicker(); closeModal(); }},
+    {label:t("md.aj.record"), cls:"btn primary", act:confirmAjuste}
+  ], true);
+  pintarPreviewAjuste();
+  wireNameTips(document.getElementById("aj_prod").parentElement);
+  const prodBtn=document.getElementById("aj_prod");
+  prodBtn.onclick=()=> openAjustePicker(prodBtn);
+  const st=document.getElementById("aj_store"); if(st) st.onchange=()=>{ adjDraft.store=st.value; renderAjuste(); };
+  document.getElementById("aj_modo").onchange=e=>{ adjDraft.modo=e.target.value; renderAjuste(); document.getElementById("aj_cant").focus(); };
+  document.getElementById("aj_cant").oninput=e=>{ adjDraft.cantidad=e.target.value; pintarPreviewAjuste(); };
   document.getElementById("aj_obs").oninput=e=>adjDraft.obs=e.target.value;
   document.getElementById("aj_fe").oninput=e=>adjDraft.fecha=e.target.value;
+}
+/* Vista previa: stock actual → cómo queda, con la diferencia. */
+function pintarPreviewAjuste(){
+  const box=document.getElementById("aj_prev"); if(!box || !adjDraft) return;
+  const p=prodById(adjDraft.productoId);
+  const ok = p && adjDraft.cantidad!=="" && !isNaN(+adjDraft.cantidad);
+  if(!ok){ box.innerHTML=`<div class="aj-prev vacio">${t("md.aj.p.empty")}</div>`; return; }
+  const cur=stockDe(p, adjDraft.store);
+  const nuevo = adjDraft.modo==="recuento" ? +adjDraft.cantidad : cur+(+adjDraft.cantidad);
+  const delta = +(nuevo-cur).toFixed(4);
+  const cls = nuevo<0 ? "neg" : (delta>0 ? "up" : (delta<0 ? "down" : ""));
+  box.innerHTML=`<div class="aj-prev ${cls}">
+    <div><div class="lbl">${t("md.aj.p.now")}</div><div class="n num">${qty(cur)}</div></div>
+    <div class="flecha" aria-hidden="true">→</div>
+    <div><div class="lbl">${t("md.aj.p.after")}</div><div class="n num">${qty(nuevo)}</div></div>
+    <div class="delta num">${delta>=0?"+":"−"}${qty(Math.abs(delta))}</div>
+  </div>`;
+}
+/* Buscador de producto del ajuste (mismo popup que en compras/ventas). Muestra el stock
+   que hay en la sociedad elegida; Enter elige el primero de la lista. */
+function openAjustePicker(anchor){
+  closeProductPicker();
+  _pickerAnchor = anchor; anchor.classList.add("open");
+  const pop=document.createElement("div"); pop.className="ppick-pop";
+  pop.style.width = Math.max(anchor.getBoundingClientRect().width, 360)+"px";
+  pop.innerHTML=`<input class="inp ppick-search" placeholder="${t("md.ph.searchprod")}" autocomplete="off" spellcheck="false"><div class="ppick-list"></div>`;
+  document.body.appendChild(pop);
+  const search=pop.querySelector(".ppick-search"), listEl=pop.querySelector(".ppick-list");
+  const base = db.productos.filter(x=>!soloEnVault(x)||isAdmin())
+    .sort((a,b)=> String(a.nombre||"").localeCompare(String(b.nombre||""),"es",{numeric:true}));
+  let visibles=[];
+  const paint=(q)=>{
+    q=(q||"").trim().toLowerCase();
+    const palabras=q.split(/\s+/).filter(Boolean);
+    visibles = palabras.length ? base.filter(x=>{ const h=((x.nombre||"")+" "+(x.sku||"")).toLowerCase(); return palabras.every(w=>h.includes(w)); }) : base;
+    listEl.innerHTML = visibles.length ? visibles.slice(0,300).map(x=>{
+      const sku = x.sku ? `<span class="sku">${esc(x.sku)}</span>` : "";
+      const act = x.id===adjDraft.productoId ? " active" : "";
+      return `<button type="button" class="ppick-item${act}" data-pick="${x.id}">${sku}<span class="pi-name" data-fullname="${esc(x.nombre)}">${esc(x.nombre)}</span><span class="pi-disp">${esc(storeName(adjDraft.store))}: ${qty(stockDe(x, adjDraft.store))}</span></button>`;
+    }).join("") : `<div class="ppick-empty">${t("md.pick.noprodmatch")}</div>`;
+    listEl.querySelectorAll("[data-pick]").forEach(it=> it.onclick=()=> elegir(it.dataset.pick));
+    wireNameTips(listEl);
+  };
+  const elegir=(id)=>{ closeProductPicker(); adjDraft.productoId=id; renderAjuste(); const c=document.getElementById("aj_cant"); if(c) c.focus(); };
+  paint("");
+  search.oninput=()=> paint(search.value);
+  search.onkeydown=e=>{ if(e.key==="Enter" && visibles.length){ e.preventDefault(); elegir(visibles[0].id); } };
+  positionPicker(pop, anchor);
+  window.addEventListener("scroll", repositionPicker, true);
+  window.addEventListener("resize", closeProductPicker);
+  setTimeout(()=>{ document.addEventListener("mousedown", onPickerOutside, true); document.addEventListener("keydown", onPickerKey, true); }, 0);
+  search.focus();
 }
 function confirmAjuste(){
   const p = prodById(adjDraft.productoId);
@@ -421,7 +468,7 @@ function confirmAjuste(){
   else consumedAdj = fifoConsumir(p, store, -delta).consumed || null;
   moverStock(p, delta, p.ultimoCosto||0, "ajuste", adjId, ref, { tipo:"ajuste", obs:adjDraft.obs.trim(), fecha:fechaISO, store });
   if(consumedAdj) db.movimientos[db.movimientos.length-1].consumed = consumedAdj;
-  adjDraft=null; save(); closeModal();
+  adjDraft=null; closeProductPicker(); save(); closeModal();
   toast(t("md.aj.recorded",{delta:(delta>=0?'+':'−')+qty(Math.abs(delta))}), delta>=0?"up":"down");
   render();
 }

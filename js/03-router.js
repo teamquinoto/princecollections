@@ -19,6 +19,10 @@ function wireSections(){
     if(first) setView(first.dataset.view);
   });
 }
+// v126: búsqueda global — Cmd/Ctrl+K abre el buscador desde cualquier pantalla (portado de stockselect).
+document.addEventListener("keydown", (e)=>{
+  if((e.metaKey||e.ctrlKey) && (e.key==="k"||e.key==="K")){ e.preventDefault(); if(typeof openCmdK==="function" && session) openCmdK(); }
+});
 document.querySelectorAll("#nav button, #navMob button, #tabbar button[data-view], #moreSheet button[data-view]").forEach(b=>{
   b.addEventListener("click", ()=> setView(b.dataset.view));
 });
@@ -83,6 +87,16 @@ function applyRoleUI(){
     el.textContent = txt;
     el.style.background = admin ? "color-mix(in srgb, var(--accent) 16%, transparent)" : "color-mix(in srgb, var(--up) 18%, transparent)";
     el.style.color = admin ? "var(--accent-ink)" : "var(--up-ink)";
+  });
+  // v126: chip de la barra superior (PC) — iniciales + nombre de quien está logueado + rol
+  const ini = String(nombre||"?").trim().split(/[\s._-]+/).filter(Boolean).map(w=>w[0]).join("").slice(0,2).toUpperCase() || "?";
+  const rol = admin ? t("role.admin") : t("role.seller");
+  document.querySelectorAll("[data-userchip]").forEach(el=>{
+    el.hidden = !session;
+    if(!session) return;
+    el.title = (nombre||"") + " · " + rol;
+    el.innerHTML = `<span class="tb-av">${esc(ini)}</span><span class="tb-uname">${esc(nombre||"—")}</span>`+
+                   `<span class="tb-role ${admin?"adm":"sel"}">${esc(rol)}</span>`;
   });
 }
 function render(){

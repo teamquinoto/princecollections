@@ -14,8 +14,7 @@ function viewDocs(tipo){
       <p>${isC?t("doc.sub.purch"):t("doc.sub.sales")}</p>
     </div>
     <div class="actions">
-      ${(isC&&puedeComprar())?`<button class="btn" data-import>${ICO.importpdf}${t("doc.btn.import")}</button>`:""}
-      <button class="btn primary" data-open="${tipo}">${isC?ICO.buy+t("doc.btn.manualbuy"):ICO.sale+t("doc.btn.newsale")}</button>
+      <button class="btn primary" data-open="${tipo}">${isC?ICO.buy+t("dash.newpurchase"):ICO.sale+t("doc.btn.newsale")}</button>
     </div>
   </div>
   ${list.length ? `<div class="kpis" id="docKpis">${docKpisHTML(tipo, filtrarDocs(tipo))}</div>` : ""}

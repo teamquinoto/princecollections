@@ -168,7 +168,12 @@ function generarInvoicePDF(id){
   toast(t("pdf.inv.downloaded"));
 }
 
-/* Lista de precios para clientes (punto 10). Recibe la lista ya filtrada. */
+/* Lista de precios para clientes (punto 10). Recibe la lista ya filtrada.
+   v125: rediseño con la paleta de la app — banda azul con la marca, productos agrupados
+   por juego (encabezado de sección con barra de color), SKU con ancho medido (los SKU
+   largos ya no pisan el nombre), idioma, filas cebra, encabezado de tabla repetido en
+   cada hoja y pie con "Page X of Y". Nombres limpios como en el catálogo público
+   (sin *DISPLAY*; el "Limit 6" pasa a una línea propia). Todo en inglés (tEn). */
 function exportListaPrecios(prods){
   if(libFalta("jspdf", ()=> exportListaPrecios(prods), ()=> toast(t("pdf.err.gen"),"warn"))) return;
   // Point 9: a customer price list must never leak blocked or investment items.
@@ -177,28 +182,111 @@ function exportListaPrecios(prods){
   if(!clean.length){ toast(t("pdf.pl.noprod"),"warn"); return; }
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit:"pt", format:"letter" });
-  const M=48, W=doc.internal.pageSize.getWidth(); let y=56;
+  const W=doc.internal.pageSize.getWidth(), H=doc.internal.pageSize.getHeight(), M=44;
   const em=db.config.emisor||{};
-  doc.setFont("helvetica","bold"); doc.setFontSize(18); doc.setTextColor(20);
-  doc.text(em.nombre?tEn("pdf.pl.titleName",{name:em.nombre}):tEn("pdf.pl.title"), M, y); y+=18;
-  doc.setFont("helvetica","normal"); doc.setFontSize(9.5); doc.setTextColor(120);
-  doc.text(new Date().toLocaleDateString("en-US"), M, y); y+=20;
+  // Paleta de la app (styles.css): azul de acción, tintas y fondos cálidos.
+  const ACC=[37,99,235], ACC_BG=[234,240,252], INK=[26,26,26], SOFT=[58,54,47], MUT=[107,102,94],
+        LINE=[234,231,225], ZEBRA=[250,249,247], SKU_INK=[29,78,216];
+  const SECC=[[37,99,235],[79,70,229],[13,148,136],[180,83,9],[190,24,93],[22,128,61],[124,58,237],[133,122,107]];
+  const ink=c=>doc.setTextColor(c[0],c[1],c[2]), fill=c=>doc.setFillColor(c[0],c[1],c[2]), draw=c=>doc.setDrawColor(c[0],c[1],c[2]);
+  const LANG={JP:"JP", ESP:"ES", KOR:"KR", EN:"EN"};
 
-  const cSKU=M, cName=M+90, cPrice=W-M;
-  doc.setFillColor(245); doc.rect(M, y-12, W-2*M, 22, "F");
-  doc.setFont("helvetica","bold"); doc.setFontSize(9.5); doc.setTextColor(40);
-  doc.text(tEn("pdf.pl.sku"), cSKU, y+3); doc.text(tEn("pdf.pl.product"), cName, y+3); doc.text(tEn("pdf.pl.price"), cPrice, y+3, {align:"right"});
-  y+=22; doc.setFont("helvetica","normal"); doc.setTextColor(55);
-  clean.slice().sort((a,b)=>String(a.nombre||"").localeCompare(String(b.nombre||""),"en")).forEach(p=>{
-    if(y>740){ doc.addPage(); y=60; }
-    doc.setTextColor(120); doc.setFontSize(8.5); doc.text(p.sku||"—", cSKU, y);
-    doc.setTextColor(55); doc.setFontSize(10);
-    const wrapped=doc.splitTextToSize(p.nombre||"", cPrice-cName-70);
-    doc.text(wrapped, cName, y);
-    doc.text(pdfMoney(p.precioVenta), cPrice, y, {align:"right"});
-    y += Math.max(15, wrapped.length*12);
-    doc.setDrawColor(240); doc.line(M, y-5, W-M, y-5);
+  // Filas: nombre público limpio + juego para agrupar.
+  const filas = clean.map(p=>{
+    const lim = catLimpiarNombre(p.nombre);
+    const nombre = String(p.nombrePublico||"").trim() || lim.name || String(p.nombre||"");
+    const limite = Number(p.limiteCliente)>0 ? Math.floor(Number(p.limiteCliente)) : lim.limit;
+    const cat = String(p.categoria||"").trim();
+    const juego = (cat && cat!=="Otros") ? cat : ((typeof sagaDe==="function" && sagaDe(p)!=="—") ? sagaDe(p) : "Other");
+    return { sku:p.sku||"", nombre, limite, juego, lang:LANG[p.idioma]||"", precio:p.precioVenta };
   });
+  const grupos = {};
+  filas.forEach(f=> (grupos[f.juego]=grupos[f.juego]||[]).push(f));
+  const juegos = Object.keys(grupos).sort((a,b)=> a.localeCompare(b,"en"));
+  juegos.forEach(g=> grupos[g].sort((a,b)=> a.nombre.localeCompare(b.nombre,"en",{numeric:true})));
+
+  // Columnas: SKU medido (con tope), idioma, precio fijos; el nombre se queda con el resto.
+  doc.setFont("helvetica","normal"); doc.setFontSize(8);
+  const skuW = Math.min(118, Math.max(54, ...filas.map(f=> doc.getTextWidth(f.sku||"—")))) + 14;
+  const PAD=10, X_SKU=M+PAD, X_NAME=M+skuW+PAD, X_LANG=W-M-PAD-96, X_PRICE=W-M-PAD;
+  const NAME_W = X_LANG - X_NAME - 14;
+  const TOP_PAGE2 = 56, BOTTOM = H-58, HEAD_H=24, LEAD=12;
+  let y = 0;
+
+  const banda = ()=>{
+    fill(ACC); doc.rect(0,0,W,88,"F");
+    doc.setTextColor(255,255,255);
+    doc.setFont("helvetica","bold"); doc.setFontSize(20);
+    doc.text(em.nombre || tEn("pdf.pl.title"), M, 40);
+    doc.setFont("helvetica","normal"); doc.setFontSize(8.5);
+    const sub=[em.email, em.tel].filter(Boolean).join("   ·   ");
+    if(sub) doc.text(String(sub), M, 58);
+    doc.setFont("helvetica","bold"); doc.setFontSize(17);
+    doc.text(tEn("pdf.pl.title").toUpperCase(), W-M, 38, {align:"right"});
+    doc.setFont("helvetica","normal"); doc.setFontSize(9);
+    doc.text(fmtDateUS(isoLocal(new Date())), W-M, 54, {align:"right"});
+    doc.text(tEn("pdf.pl.count",{n:filas.length}), W-M, 67, {align:"right"});
+  };
+  const cabecera = ()=>{
+    fill(INK); doc.roundedRect(M, y, W-2*M, HEAD_H, 4, 4, "F");
+    doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(8);
+    const ty=y+HEAD_H/2+3;
+    doc.text(tEn("pdf.pl.sku").toUpperCase(), X_SKU, ty);
+    doc.text(tEn("pdf.pl.product").toUpperCase(), X_NAME, ty);
+    doc.text(tEn("pdf.pl.lang").toUpperCase(), X_LANG, ty);
+    doc.text(tEn("pdf.pl.price").toUpperCase(), X_PRICE, ty, {align:"right"});
+    y += HEAD_H + 8;
+  };
+  const nuevaHoja = ()=>{ doc.addPage(); y=TOP_PAGE2; cabecera(); };
+
+  banda(); y = 112; cabecera();
+  juegos.forEach((g, gi)=>{
+    const color = SECC[gi % SECC.length];
+    if(y + 30 + 22 > BOTTOM) nuevaHoja();            // sección + al menos una fila
+    // Encabezado de sección: barra de color + nombre del juego + cantidad
+    fill(ACC_BG); doc.roundedRect(M, y, W-2*M, 22, 3, 3, "F");
+    fill(color); doc.rect(M, y, 4, 22, "F");
+    ink(INK); doc.setFont("helvetica","bold"); doc.setFontSize(10.5);
+    doc.text(g, M+14, y+15);
+    ink(MUT); doc.setFont("helvetica","normal"); doc.setFontSize(8.5);
+    doc.text(tEn("pdf.pl.count",{n:grupos[g].length}), W-M-PAD, y+15, {align:"right"});
+    y += 28;
+    grupos[g].forEach((f, i)=>{
+      doc.setFont("helvetica","normal"); doc.setFontSize(9.5);
+      const lineas = doc.splitTextToSize(f.nombre, NAME_W);
+      const extra = f.limite ? 1 : 0;
+      const rowH = Math.max(22, (lineas.length+extra)*LEAD + 10);
+      if(y + rowH > BOTTOM) nuevaHoja();
+      if(i%2===1){ fill(ZEBRA); doc.rect(M, y, W-2*M, rowH, "F"); }
+      const base = y + 6 + 8.5;                         // primera línea de texto
+      ink(SKU_INK); doc.setFont("helvetica","normal"); doc.setFontSize(8);
+      doc.text(f.sku||"—", X_SKU, base);
+      ink(INK); doc.setFontSize(9.5);
+      doc.text(lineas, X_NAME, base, {lineHeightFactor:LEAD/9.5});
+      if(f.limite){ ink(MUT); doc.setFontSize(7.5); doc.text(tEn("pdf.pl.limit",{n:f.limite}), X_NAME, base + lineas.length*LEAD); }
+      if(f.lang){
+        doc.setFontSize(7.5); doc.setFont("helvetica","bold");
+        const lw = doc.getTextWidth(f.lang) + 10;
+        fill(ACC_BG); doc.roundedRect(X_LANG, base-8, lw, 12, 6, 6, "F");
+        ink(SKU_INK); doc.text(f.lang, X_LANG+5, base+0.5);
+      }
+      ink(INK); doc.setFont("helvetica","bold"); doc.setFontSize(10);
+      doc.text(pdfMoney(f.precio), X_PRICE, base, {align:"right"});
+      y += rowH;
+      draw(LINE); doc.setLineWidth(0.6); doc.line(M, y, W-M, y);
+    });
+    y += 12;
+  });
+
+  // Pie en todas las hojas
+  const n = doc.getNumberOfPages();
+  for(let i=1;i<=n;i++){
+    doc.setPage(i);
+    draw(LINE); doc.setLineWidth(0.6); doc.line(M, H-40, W-M, H-40);
+    ink(MUT); doc.setFont("helvetica","normal"); doc.setFontSize(7.5);
+    doc.text(tEn("pdf.pl.foot",{cur:db.config.moneda||"USD"}), M, H-27);
+    doc.text(tEn("pdf.inv.page",{n:i,t:n}), W-M, H-27, {align:"right"});
+  }
   doc.save(`price-list-${isoLocal(new Date())}.pdf`);
   toast(t("pdf.pl.exported",{n:clean.length, extra:dropped>0?t("pdf.pl.excluded",{d:dropped}):""}));
 }

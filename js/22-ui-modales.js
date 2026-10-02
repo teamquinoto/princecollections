@@ -90,6 +90,7 @@ if(_pt) _pt.onclick=()=>{
 document.querySelectorAll("[data-logout-side]").forEach(b=> b.onclick=logout);
 document.querySelectorAll("[data-syncside]").forEach(b=> b.onclick=()=> pullNow());
 document.querySelectorAll("[data-theme-toggle]").forEach(b=> b.onclick=toggleTheme);
+document.querySelectorAll("[data-open-cmdk]").forEach(b=> b.onclick=()=>{ if(typeof openCmdK==="function") openCmdK(); });
 // Topbar glass: al scrollear aparece el fondo tenue + hairline inferior
 const _tb=document.getElementById("topbar");
 if(_tb){ const onScroll=()=>_tb.classList.toggle("scrolled", (window.scrollY||document.documentElement.scrollTop)>4);
@@ -186,3 +187,76 @@ document.addEventListener("visibilitychange", ()=>{ if(!document.hidden && sessi
   }, true);
   window.addEventListener("resize", function(){ closeAll(null); });
 })();
+
+
+/* ============================================================
+   v126 · BUSCADOR GLOBAL (Cmd/Ctrl+K) — portado de stockselect
+   ------------------------------------------------------------
+   Busca productos (nombre o SKU), clientes y facturas (número o
+   contraparte) desde cualquier pantalla y salta directo: producto →
+   ficha, cliente → Clientes filtrado, factura → la abre. Acepta varias
+   palabras ("hobbit coll"). Teclado: ↑ ↓ Enter Esc. Las compras sólo
+   aparecen para el admin (los vendedores no las ven).
+   ============================================================ */
+let _cmdkOpen = false;
+function openCmdK(){
+  if(_cmdkOpen || !session) return;
+  _cmdkOpen = true;
+  const ov = document.createElement("div");
+  ov.id = "cmdk-ov"; ov.className = "cmdk-ov";
+  ov.innerHTML = `<div class="cmdk-box" role="dialog" aria-modal="true" aria-label="${esc(t("cmdk.ph"))}">
+      <div class="cmdk-top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        <input class="cmdk-input" placeholder="${esc(t("cmdk.ph"))}" autocomplete="off" spellcheck="false"><kbd>Esc</kbd></div>
+      <div class="cmdk-list"></div>
+    </div>`;
+  document.body.appendChild(ov);
+  const input = ov.querySelector(".cmdk-input");
+  const list  = ov.querySelector(".cmdk-list");
+  let results = [], active = 0;
+
+  const close = ()=>{ _cmdkOpen=false; document.removeEventListener("keydown", onKey, true); ov.remove(); };
+  const hl = ()=>{ list.querySelectorAll(".cmdk-item").forEach((it,idx)=> it.classList.toggle("on", idx===active)); const el=list.querySelector(".cmdk-item.on"); if(el && el.scrollIntoView) el.scrollIntoView({block:"nearest"}); };
+  const paint = ()=>{
+    if(!results.length){ list.innerHTML = `<div class="cmdk-empty">${input.value.trim()?t("cmdk.nomatch"):t("cmdk.type")}</div>`; return; }
+    list.innerHTML = results.map((r,idx)=>`<button type="button" class="cmdk-item${idx===active?" on":""}" data-idx="${idx}">
+        <span class="cmdk-kind k-${r.k}">${esc(r.kind)}</span>
+        <span class="cmdk-label">${esc(r.label)}</span>
+        ${r.sub?`<span class="cmdk-sub">${esc(r.sub)}</span>`:""}</button>`).join("");
+    list.querySelectorAll(".cmdk-item").forEach(it=>{
+      it.onclick = ()=> results[+it.dataset.idx].action();
+      it.onmousemove = ()=>{ const idx=+it.dataset.idx; if(active!==idx){ active=idx; hl(); } };
+    });
+  };
+  const coincide = (txt, palabras)=>{ txt=String(txt||"").toLowerCase(); return palabras.every(w=> txt.includes(w)); };
+  const build = (q)=>{
+    const palabras = String(q||"").trim().toLowerCase().split(/\s+/).filter(Boolean);
+    results = [];
+    if(palabras.length){
+      (db.productos||[]).filter(p=> coincide((p.nombre||"")+" "+(p.sku||""), palabras)).slice(0,7)
+        .forEach(p=> results.push({ k:"p", kind:t("cmdk.kind.product"), label:p.nombre||"—", sub:p.sku||"",
+          action:()=>{ close(); if(typeof openFicha==="function") openFicha(p.id); } }));
+      (db.clientes||[]).filter(c=> coincide((c.nombre||"")+" "+(c.empresa||"")+" "+(c.email||""), palabras)).slice(0,5)
+        .forEach(c=> results.push({ k:"c", kind:t("cmdk.kind.customer"), label:c.nombre||"—", sub:c.empresa||"",
+          action:()=>{ close(); if(typeof cliFiltro!=="undefined") cliFiltro=c.nombre||""; setView("clientes"); } }));
+      const docs = [];
+      (db.ventas||[]).forEach(d=> docs.push(["venta",d]));
+      if(isAdmin()) (db.compras||[]).forEach(d=> docs.push(["compra",d]));
+      docs.filter(([dt,d])=> coincide((d.numero||"")+" "+((d.cliente&&d.cliente.nombre)||d.contraparte||""), palabras))
+        .sort((a,b)=> String(b[1].fecha||"").localeCompare(String(a[1].fecha||""))).slice(0,7)
+        .forEach(([dt,d])=> results.push({ k:dt==="venta"?"v":"o", kind: dt==="venta"?t("cmdk.kind.sale"):t("cmdk.kind.purchase"),
+          label:"#"+(d.numero||"—")+" · "+((d.cliente&&d.cliente.nombre)||d.contraparte||"—"), sub: fmtDate(d.fecha),
+          action:()=>{ close(); verDoc(dt, d.id); } }));
+    }
+    active = 0; paint();
+  };
+  const onKey = (e)=>{
+    if(e.key==="Escape"){ e.preventDefault(); e.stopPropagation(); close(); }
+    else if(e.key==="ArrowDown"){ e.preventDefault(); if(results.length){ active=Math.min(active+1, results.length-1); hl(); } }
+    else if(e.key==="ArrowUp"){ e.preventDefault(); if(results.length){ active=Math.max(active-1, 0); hl(); } }
+    else if(e.key==="Enter"){ e.preventDefault(); if(results[active]) results[active].action(); }
+  };
+  input.oninput = ()=> build(input.value);
+  ov.onmousedown = (e)=>{ if(e.target===ov) close(); };
+  document.addEventListener("keydown", onKey, true);
+  build(""); input.focus();
+}
