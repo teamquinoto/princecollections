@@ -1456,3 +1456,14 @@ select.inp.bad{border-color:var(--down)}
    (ej. Nueva venta) no se corta arriba, arranca arriba y se puede scrollear.
    En celular no aplica: ahí siguen saliendo desde abajo (hoja). */
 @media (min-width:861px){ .scrim > .modal{margin:auto} }
+
+/* v118 · Productos: botón "Compartir catálogo" (verde = sale hacia afuera, al cliente).
+   El menú es el .ovf-menu genérico; acá sólo el aspecto del botón y la pill "Público". */
+.btn.cat-share-btn{color:var(--pos);background:var(--pos-bg);
+  border-color:color-mix(in srgb,var(--pos) 45%,transparent);white-space:nowrap;font-weight:600}
+.btn.cat-share-btn:hover:not(:disabled){background-color:color-mix(in srgb,var(--pos) 16%,var(--surface));border-color:var(--pos)}
+.btn.cat-share-btn[aria-expanded="true"]{border-color:var(--pos)}
+.btn.cat-share-btn svg.i:last-child{width:14px;height:14px;opacity:.85;margin-left:-2px}
+.cat-share-pill{font-size:var(--fs-xs);font-weight:600;line-height:1;padding:3px 7px;border-radius:var(--r-pill);
+  background:color-mix(in srgb,var(--pos) 20%,transparent);color:var(--pos)}
+.cat-share .ovf-menu{min-width:210px}
