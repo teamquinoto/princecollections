@@ -567,6 +567,9 @@
 
   Object.assign(I18N.en, { "fin.period.custom":"Range", "fin.range.all":"All history", "fin.range.today":"today", "fin.range.tip":"Exact dates being filtered. Choose Range to pick your own." });
   Object.assign(I18N.es, { "fin.period.custom":"Rango", "fin.range.all":"Todo el historial", "fin.range.today":"hoy", "fin.range.tip":"Fechas exactas que se están filtrando. Elegí Rango para marcar las tuyas." });
+  /* v128: selector de mes del preset "Mes" */
+  Object.assign(I18N.en, { "fin.mes.pick":"Choose month", "fin.mes.prevy":"Previous year", "fin.mes.nexty":"Next year", "fin.mes.tip":"Choose which month to view (whole month; the current month runs to today)." });
+  Object.assign(I18N.es, { "fin.mes.pick":"Elegir mes", "fin.mes.prevy":"Año anterior", "fin.mes.nexty":"Año siguiente", "fin.mes.tip":"Elegí qué mes ver (mes completo; el mes en curso llega hasta hoy)." });
 })();
 
 /* ============================================================

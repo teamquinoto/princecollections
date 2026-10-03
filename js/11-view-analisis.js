@@ -141,19 +141,62 @@ function paisesVentas(){
 /* Período: UN solo control. Los presets (Mes, Trim., Año, 12 meses, Todo) muestran
    al lado el rango exacto que están filtrando, en texto. "Rango" habilita las dos
    fechas para elegir desde/hasta. Antes las fechas estaban siempre visibles junto a
-   los presets y no se sabía si filtraba por "Año" o por las fechas. */
+   los presets y no se sabía si filtraba por "Año" o por las fechas.
+   v128: "Mes" abre un selector con los 12 meses del año (con flechas para cambiar de
+   año) y filtra el mes elegido COMPLETO. Los meses futuros no se pueden elegir. */
+let finMesPickOpen = false;   // selector de mes abierto
+let finMesPickY = 0;          // año que se está mostrando en el selector
+function finMesLabel(mk){ const [y,m]=mk.split("-"); return `${t("cal.mon."+((+m)-1))} ${y}`; }
+function finMesPickHTML(){
+  const sel = finMesSel(), cur = finMesActual(), yCur = +cur.slice(0,4);
+  const y = finMesPickY || +sel.slice(0,4);
+  const cells = [];
+  for(let i=0;i<12;i++){
+    const mk = `${y}-${String(i+1).padStart(2,"0")}`, fut = mk>cur;
+    cells.push(`<button type="button" class="cal-mcell ${mk===sel?"sel":""} ${mk===cur?"now":""}" data-finm="${mk}" ${fut?"disabled":""} aria-pressed="${mk===sel}">${esc(t("cal.mon."+i).slice(0,3))}</button>`);
+  }
+  return `<div class="cal-pop fin-mpick-pop" role="dialog" aria-label="${t("fin.mes.pick")}">
+    <div class="cal-head">
+      <button type="button" class="cal-nav" data-finmy="-1" aria-label="${t("fin.mes.prevy")}">‹</button>
+      <div class="cal-title">${y}</div>
+      <button type="button" class="cal-nav" data-finmy="1" aria-label="${t("fin.mes.nexty")}" ${y>=yCur?"disabled":""}>›</button>
+    </div>
+    <div class="cal-mgrid">${cells.join("")}</div>
+  </div>`;
+}
 function finPeriodHTML(){
-  const f = finFiltros, r = finRange(f), custom = f.periodo==="custom";
+  const f = finFiltros, r = finRange(f), custom = f.periodo==="custom", mtd = f.periodo==="mtd";
   const segBtn = p=> `<button type="button" class="seg-btn ${f.periodo===p?"on":""}" data-finp="${p}" aria-pressed="${f.periodo===p}">${t("fin.period."+p)}</button>`;
   const rangeTxt = (r.from||r.to) ? `${r.from?fmtDate(r.from):"…"} – ${r.to?fmtDate(r.to):t("fin.range.today")}` : t("fin.range.all");
+  const mesPick = mtd ? `<div class="fin-mpick">
+      <button type="button" class="fin-mpick-btn ${finMesPickOpen?"open":""}" id="fin_mes_btn" aria-haspopup="dialog" aria-expanded="${finMesPickOpen}" title="${t("fin.mes.tip")}">
+        <span>${esc(finMesLabel(finMesSel(f)))}</span><span class="fin-mpick-caret" aria-hidden="true">▾</span></button>
+      ${finMesPickOpen ? finMesPickHTML() : ""}
+    </div>` : "";
   return `<div class="slicer fin-period-slicer"><span>${t("fin.period")}</span>
     <div class="fin-period">
       <div class="seg" role="group" aria-label="${t("fin.period")}">${FIN_PERIODS.map(segBtn).join("")}${segBtn("custom")}</div>
+      ${mesPick}
       ${custom
         ? `<div class="fin-range"><input type="date" id="fin_desde" value="${esc(f.desde||"")}" aria-label="${t("an.sl.from")}"><span class="fin-range-sep">–</span><input type="date" id="fin_hasta" value="${esc(f.hasta||"")}" aria-label="${t("an.sl.to")}"></div>`
         : `<span class="fin-range-txt" title="${t("fin.range.tip")}">${esc(rangeTxt)}</span>`}
     </div></div>`;
 }
+/* Cierre del selector de mes al tocar afuera o con Esc. Va en fase de CAPTURA para
+   cerrarlo ANTES de que cualquier otro botón re-renderice. Se excluye el propio botón
+   "Mes" (que abre/cierra con su onclick) y el selector. Se instala una sola vez. */
+function finMesPickClose(){
+  if(!finMesPickOpen) return;
+  finMesPickOpen = false;
+  document.querySelectorAll(".fin-mpick-pop").forEach(x=> x.remove());
+  const b=document.getElementById("fin_mes_btn"); if(b){ b.classList.remove("open"); b.setAttribute("aria-expanded","false"); }
+}
+document.addEventListener("click", (e)=>{
+  if(!finMesPickOpen) return;
+  if(e.target.closest && e.target.closest('.fin-mpick, [data-finp="mtd"]')) return;
+  finMesPickClose();
+}, true);
+document.addEventListener("keydown", (e)=>{ if(e.key==="Escape" && finMesPickOpen) finMesPickClose(); });
 function finFilterBarHTML(){
   const f = finFiltros, r = finRange(f);
   const opt = (val, label, cur)=> `<option value="${esc(val)}" ${cur===val?"selected":""}>${esc(label)}</option>`;
@@ -179,21 +222,41 @@ function wireFinFilterBar(){
       if(finFiltros.periodo==="custom") return;
       // "Rango" arranca con el rango que estabas mirando, así no salta nada
       const cur = finRange(); finFiltros.periodo="custom"; finFiltros.desde=cur.from||""; finFiltros.hasta=cur.to||"";
-    } else { finFiltros.periodo=p; finFiltros.desde=""; finFiltros.hasta=""; }
+      finMesPickOpen = false;
+    } else if(p==="mtd"){
+      // "Mes": si ya estaba en Mes, abre/cierra el selector; si venías de otro preset,
+      // entra al mes en curso y abre el selector para que elijas el que quieras.
+      if(finFiltros.periodo==="mtd"){ finMesPickOpen = !finMesPickOpen; }
+      else { finFiltros.periodo="mtd"; finFiltros.mes=""; finFiltros.desde=""; finFiltros.hasta=""; finMesPickOpen = true; }
+      finMesPickY = +finMesSel().slice(0,4);
+    } else { finFiltros.periodo=p; finFiltros.desde=""; finFiltros.hasta=""; finMesPickOpen = false; }
+    if(typeof pnlDrill!=="undefined") pnlDrill=null;
+    render();
+  });
+  // v128: selector de mes
+  const mb = document.getElementById("fin_mes_btn");
+  if(mb) mb.onclick=()=>{ finMesPickOpen = !finMesPickOpen; finMesPickY = +finMesSel().slice(0,4); render(); };
+  m.querySelectorAll("[data-finmy]").forEach(b=> b.onclick=()=>{
+    finMesPickY = (finMesPickY || +finMesSel().slice(0,4)) + (+b.dataset.finmy); render();
+  });
+  m.querySelectorAll("[data-finm]").forEach(b=> b.onclick=()=>{
+    const mk = b.dataset.finm;
+    finFiltros.periodo="mtd"; finFiltros.mes = (mk===finMesActual() ? "" : mk);
+    finFiltros.desde=""; finFiltros.hasta=""; finMesPickOpen = false;
     if(typeof pnlDrill!=="undefined") pnlDrill=null;
     render();
   });
   const dateChg = ()=>{
     let d0=document.getElementById("fin_desde").value, d1=document.getElementById("fin_hasta").value;
     if(d0 && d1 && d0>d1){ const x=d0; d0=d1; d1=x; }     // desde > hasta: se invierten
-    finFiltros.periodo="custom"; finFiltros.desde=d0; finFiltros.hasta=d1; render();
+    finFiltros.periodo="custom"; finFiltros.desde=d0; finFiltros.hasta=d1; finMesPickOpen=false; render();
   };
   const d0=document.getElementById("fin_desde"), d1=document.getElementById("fin_hasta");
   if(d0) d0.onchange=dateChg; if(d1) d1.onchange=dateChg;
   [["fin_linea","linea"],["fin_idioma","idioma"],["fin_pais","pais"],["fin_vend","vend"]].forEach(([id,k])=>{
     const el=document.getElementById(id); if(el) el.onchange=()=>{ finFiltros[k]=el.value; render(); };
   });
-  const c=document.getElementById("fin_clear"); if(c) c.onclick=()=>{ finResetFiltros(); render(); };
+  const c=document.getElementById("fin_clear"); if(c) c.onclick=()=>{ finResetFiltros(); finMesPickOpen=false; render(); };
 }
 
 /* ============================================================

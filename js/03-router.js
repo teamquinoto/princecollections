@@ -29,12 +29,11 @@ document.querySelectorAll("#nav button, #navMob button, #tabbar button[data-view
 function setView(v){
   // gate: admin-only views (purchases, investment, analysis, data) fall back to dashboard for sellers
   if(!isAdmin() && ADMIN_VIEWS.includes(v)) v="dash";
-  /* v91: las pestañas con barra de período (Resumen, Análisis, P&L, Plan) arrancan
-     siempre en "Mes" al entrar desde otra pestaña. Los demás filtros (juego, idioma,
-     país, vendedor) se mantienen; re-renderizar la misma pestaña no toca nada. */
-  if(v!==view && ["resumen","analisis","pnl","plan"].includes(v) && typeof finFiltros!=="undefined"){
-    finFiltros.periodo = "mtd"; finFiltros.desde = ""; finFiltros.hasta = "";
-  }
+  /* v128: los filtros de Finanzas (período, mes elegido, juego, idioma, país, vendedor)
+     se MANTIENEN al pasar entre Resumen, Análisis, P&L y Plan: si estás viendo septiembre,
+     seguís viendo septiembre hasta tocar "Limpiar". (Antes, v91, el período volvía a "Mes"
+     en curso al cambiar de pestaña.) Sólo se cierra el selector de mes si quedó abierto. */
+  if(typeof finMesPickOpen!=="undefined") finMesPickOpen = false;
   view = v;
   activeSection = SECTION_OF[v] || activeSection;
   syncSectionUI();

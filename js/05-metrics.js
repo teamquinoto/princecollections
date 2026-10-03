@@ -23,9 +23,12 @@
    ============================================================ */
 
 /* ---------- Estado de filtros compartido ---------- */
-let finFiltros = { periodo:"mtd", desde:"", hasta:"", linea:"", idioma:"", pais:"", vend:"" };
+/* v128: "mes" = mes elegido en el selector de "Mes" ("YYYY-MM"). Vacío = mes en curso.
+   El estado vive mientras no se toque "Limpiar": cambiar de pestaña (Resumen, Análisis,
+   P&L, Plan) ya NO lo reinicia. */
+let finFiltros = { periodo:"mtd", mes:"", desde:"", hasta:"", linea:"", idioma:"", pais:"", vend:"" };
 const FIN_PERIODS = ["mtd","qtd","ytd","12m","all"];
-function finResetFiltros(){ finFiltros = { periodo:"mtd", desde:"", hasta:"", linea:"", idioma:"", pais:"", vend:"" }; }
+function finResetFiltros(){ finFiltros = { periodo:"mtd", mes:"", desde:"", hasta:"", linea:"", idioma:"", pais:"", vend:"" }; }
 
 /* ---------- Fechas ---------- */
 function finIso(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
@@ -43,12 +46,27 @@ function finVentasFuturas(){
   const hoy = finIso(new Date());
   return (db.ventas||[]).filter(v=> (normISO(v.fecha)||"") > hoy);
 }
-/* Rango de un preset. QTD = trimestre CALENDARIO (antes eran 3 meses móviles). */
+/* v128: mes efectivo del preset "Mes" ("YYYY-MM"). Sin elección, o con un mes futuro
+   (no debería pasar: el selector no lo deja), es el mes en curso. */
+function finMesActual(){ return finIso(finAnchor()).slice(0,7); }
+function finMesSel(f){
+  f=f||finFiltros;
+  const cur=finMesActual(), m=(f&&f.mes)||"";
+  return (/^\d{4}-\d{2}$/.test(m) && m<=cur) ? m : cur;
+}
+/* Rango de un preset. QTD = trimestre CALENDARIO (antes eran 3 meses móviles).
+   v128: "Mes" toma el mes elegido COMPLETO (1 al último día). El mes en curso
+   sigue cortando en HOY (mismo criterio de ancla que el resto de los presets). */
 function finRangeFor(preset, f){
   if(preset==="custom") return { from:(f&&f.desde)||"", to:(f&&f.hasta)||"" };
   if(preset==="all") return { from:"", to:"" };
   const a = finAnchor(), y=a.getFullYear(), m=a.getMonth();
-  if(preset==="mtd") return { from:finIso(new Date(y,m,1)), to:finIso(a) };
+  if(preset==="mtd"){
+    const ms = finMesSel(f);
+    if(ms===finMesActual()) return { from:finIso(new Date(y,m,1)), to:finIso(a) };
+    const [yy,mm] = ms.split("-").map(Number);
+    return { from:finIso(new Date(yy,mm-1,1)), to:finIso(new Date(yy,mm,0)) };   // día 0 del mes siguiente = último día
+  }
   if(preset==="qtd") return { from:finIso(new Date(y,Math.floor(m/3)*3,1)), to:finIso(a) };
   if(preset==="12m") return { from:finIso(new Date(y,m-11,1)), to:finIso(a) };
   return { from:finIso(new Date(y,0,1)), to:finIso(a) };   // ytd (default)
