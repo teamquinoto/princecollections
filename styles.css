@@ -1560,3 +1560,32 @@ select.inp.bad{border-color:var(--down)}
 .cmdk-item .cmdk-kind.k-v{color:var(--pos);background:var(--pos-bg);border-color:transparent}
 .cmdk-item .cmdk-label{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cmdk-item .cmdk-sub{flex-shrink:0;color:var(--muted);font-size:var(--fs-xs);font-family:var(--mono)}
+
+/* ============================================================
+   Selector de mes del período "Mes" — v128
+   Reusa el popover del calendario (.cal-pop / .cal-head / .cal-nav / .cal-mgrid /
+   .cal-mcell) para que se vea igual que el date picker de la app. Acá sólo va lo
+   propio: el botón disparador, la posición del popover y los meses deshabilitados.
+   ============================================================ */
+.fin-mpick{position:relative}
+.fin-mpick-btn{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 12px;
+  border:1px solid var(--line-strong);border-radius:var(--r-sm);background:var(--surface);color:var(--text);
+  font-family:var(--sans);font-size:var(--fs-sm);font-weight:700;cursor:pointer;white-space:nowrap;
+  text-transform:capitalize;transition:border-color .12s}
+.fin-mpick-btn:hover,.fin-mpick-btn.open{border-color:var(--accent-ink)}
+.fin-mpick-btn:focus-visible{outline:2px solid var(--accent-ink);outline-offset:1px}
+.fin-mpick-caret{color:var(--muted);font-size:var(--fs-xs)}
+.fin-mpick-pop{position:absolute;top:calc(100% + 6px);left:0}
+.fin-mpick-pop .cal-title{cursor:default;text-align:center}
+.fin-mpick-pop .cal-title:hover{background:none}
+.fin-mpick-pop button.cal-nav{padding:0;font-family:var(--sans)}
+.fin-mpick-pop button.cal-nav:disabled{opacity:.35;cursor:default;pointer-events:none}
+.fin-mpick-pop button.cal-mcell{background:none;font-family:var(--sans)}
+.fin-mpick-pop .cal-mcell:hover{background:var(--surface-2)}
+.fin-mpick-pop .cal-mcell.now{border-color:var(--accent-ink)}
+.fin-mpick-pop .cal-mcell.sel,.fin-mpick-pop .cal-mcell.sel:hover{background:var(--accent-fill);color:#fff}
+.fin-mpick-pop .cal-mcell:disabled{color:var(--muted);opacity:.4;cursor:default;pointer-events:none}
+@media (max-width:860px){
+  .main .fin-mpick-btn{min-height:44px}
+  .fin-mpick-pop button.cal-nav{width:40px;height:40px}
+}
