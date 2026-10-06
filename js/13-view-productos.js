@@ -123,13 +123,13 @@ function deleteSelProd(){
 
 
 /* ============================================================
-   Catálogo público (catalogo.html)
+   Catálogo público (catalog.html — v129: antes catalogo.html, que ahora redirige)
    ------------------------------------------------------------
    Link libre, sin login, solo lectura. Vive en el mismo repo de
    Pages que la app; los datos salen de GET /public/catalog del
    Worker, que ya filtra costos/precios/SKU del lado del servidor.
    ============================================================ */
-function catalogoUrl(){ return new URL("catalogo.html", location.href.split("#")[0]).href.split("?")[0]; }
+function catalogoUrl(){ return new URL("catalog.html", location.href.split("#")[0]).href.split("?")[0]; }
 async function copiarLinkCatalogo(){
   const url = catalogoUrl();
   let ok = false;
