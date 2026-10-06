@@ -86,7 +86,7 @@ Cinco pestañas admin-only que comparten **un único juego de filtros** (períod
 
 ## Catálogo público (v86)
 
-Link libre, **sin login y de solo lectura**, para que los clientes vean el stock: `https://<tu-pages>/catalogo.html` (en **Productos → Link del catálogo** se copia solo). Opcional: `?lang=es` lo abre en español.
+Link libre, **sin login y de solo lectura**, para que los clientes vean el stock: `https://<tu-pages>/catalog.html` (en **Productos → Link del catálogo** se copia solo). Los links viejos a `catalogo.html` siguen andando: redirigen solos a `catalog.html` (conservando `?lang=`). Opcional: `?lang=es` lo abre en español.
 
 - **Qué muestra:** juego, nombre, idioma, stock en unidades o cases, y lo que está **en tránsito** como "Próximamente". Nunca costos, precios, SKU, sociedades ni clientes. Los productos **bloqueados** (best offer) y la bóveda de inversión no se publican.
 - **Seguridad:** la página no usa `/state`. Pega a `GET /public/catalog` del Worker, que arma la lista con una **whitelist de campos** del lado del servidor. El `space` lo fija el Worker (`CATALOG_SPACE`, default `main`), no quien llama.
@@ -104,7 +104,8 @@ Link libre, **sin login y de solo lectura**, para que los clientes vean el stock
 | `index.html` | La app entera (UI + lógica). Es lo único imprescindible para que corra. |
 | `manifest.json` | Metadatos PWA para instalación. |
 | `sw.js` | Service worker: cachea la app y pdf.js para uso offline. |
-| `catalogo.html` | Catálogo público de stock (sin login, sin precios) con armado de pedido. |
+| `catalog.html` | Catálogo público de stock (sin login, sin precios) con armado de pedido. |
+| `catalogo.html` | Redirección a `catalog.html` para los links viejos (usa `js/catalogo-redirect.js`). |
 | `worker.js` | Backend (Cloudflare Worker v4): login con 2FA, sesión por cookie, permisos por rol, vista recortada del vendedor y API de estado con control de `rev`. |
 | `js/43-seguridad.js` | Paso 2 del login (código 2FA) y panel "Verificación en dos pasos" en Usuarios. |
 | `vendor/` | Librerías de terceros (xlsx, jspdf, pdf.js, ExcelJS, qrcode). Se cargan **a demanda**, no al abrir. |
@@ -239,7 +240,7 @@ wrangler secret put GEMINI_KEY    # opcional: OCR de facturas
 wrangler deploy
 ```
 
-En producción el servidor vive en **`https://api.princecollectionstcg.com`** (dominio propio, ver [Seguridad](#seguridad-v108v114)). Esa URL va en la constante `API_URL` de `js/01-core.js` **y** de `js/catalogo.js`, y en el `connect-src` de la CSP de `index.html` y `catalogo.html`:
+En producción el servidor vive en **`https://api.princecollectionstcg.com`** (dominio propio, ver [Seguridad](#seguridad-v108v114)). Esa URL va en la constante `API_URL` de `js/01-core.js` **y** de `js/catalogo.js`, y en el `connect-src` de la CSP de `index.html` y `catalog.html`:
 
 ```js
 const API_URL = "https://api.princecollectionstcg.com";
@@ -265,7 +266,7 @@ Abrís la app, cargás **usuario y contraseña** (un usuario creado en **Usuario
 | **Permisos en el servidor** | El rol sale de la base en cada pedido (no del celu). Un vendedor solo puede guardar **sus** ventas y altas/cambios de clientes; costos, stock, FIFO y número de factura los calcula el servidor. | `rebaseVendedor()` en `worker.js` |
 | **Vista recortada del vendedor** | El servidor le manda al vendedor solo stock, productos **sin costos**, clientes, **sus** ventas y el tránsito sin precios. Un celu que tenía esa vista y pasa a admin no puede pisar la base completa (candado `_vista`). | `SELLER_VIEW=filtrada` |
 | **Sin llave maestra** | El login de respaldo del secret (no pide 2FA, no se revoca) está apagado. | `SECRET_LOGIN=off` |
-| **CSP estricta** | La app solo ejecuta scripts propios y solo se conecta a `api.princecollectionstcg.com`. | `<meta http-equiv="Content-Security-Policy">` en `index.html` y `catalogo.html` |
+| **CSP estricta** | La app solo ejecuta scripts propios y solo se conecta a `api.princecollectionstcg.com`. | `<meta http-equiv="Content-Security-Policy">` en `index.html` y `catalog.html` |
 
 ### Emergencias
 
