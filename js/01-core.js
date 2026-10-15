@@ -154,12 +154,65 @@ const SHOW_TARGET_PRODUCT_COL = false;
 const PACKS_POR_BOX_DEF = 24;
 const BOXES_POR_CASE = { "Pokémon TCG":6, "Magic":6, "One Piece TCG":12, "Yu-Gi-Oh!":12, "Disney Lorcana":4, "Digimon":12, "Dragon Ball":12, "Flesh and Blood":4 };
 function boxesCaseDefault(cat){ return BOXES_POR_CASE[cat] || 6; }
+
+/* ============================================================
+   v130 · Comisiones: tasa única 4% + REGISTRO de cambios
+   ------------------------------------------------------------
+   - COMISION_BASE: la tasa del negocio (4% del margen).
+   - Corrección ÚNICA (flag config.comisionUnificada4V1): al principio
+     se usó otra tasa (10% por defecto) y el total quedaba en ~8% del
+     margen. Se lleva TODO al 4%: tasa por defecto, cada vendedor y
+     cada venta ya cargada. Corre una sola vez; queda en el registro.
+   - Registro (config.commissionLog): cada vez que el admin cambia la
+     tasa por defecto o la de un vendedor (o da de alta uno), save()
+     lo detecta solo comparando contra una foto de las tasas y anota
+     fecha, usuario, de → a. Las ventas ya cargadas conservan su tasa
+     (se congela por venta); un cambio aplica a las ventas nuevas.
+   Se usa var (no let): migrate() corre al cargar, antes que el resto.
+   ============================================================ */
+const COMISION_BASE = 0.04;
+var _rateSnap = null;          // foto de las tasas al último load/save
+var _migraPendiente = false;   // la corrección única corrió y falta mandarla al servidor
+function rateSnapshot(d){
+  const c = (d && d.config) || {};
+  const s = { def: c.commissionRate, v: {} };
+  (c.vendedores || []).forEach(v=>{ if(v && v.id) s.v[v.id] = { rate: v.rate, nombre: v.nombre }; });
+  return s;
+}
+function _tasaDistinta(a, b){ return Math.abs((+a||0) - (+b||0)) > 1e-9; }
+function registrarCambiosTasa(){
+  if(!db || !db.config || !_rateSnap) return;
+  const ahora = rateSnapshot(db);
+  if(isAdmin() && !db._vista){
+    const fecha = new Date().toISOString();
+    const usuario = (session && session.user) || "local";
+    const nuevos = [];
+    if(_tasaDistinta(_rateSnap.def, ahora.def))
+      nuevos.push({ fecha, usuario, tipo:"default", de:_rateSnap.def, a:ahora.def });
+    Object.keys(ahora.v).forEach(id=>{
+      const antes = _rateSnap.v[id], hoy = ahora.v[id];
+      if(!antes) nuevos.push({ fecha, usuario, tipo:"alta", vendedorId:id, nombre:hoy.nombre, de:null, a:hoy.rate });
+      else if(_tasaDistinta(antes.rate, hoy.rate)) nuevos.push({ fecha, usuario, tipo:"vendedor", vendedorId:id, nombre:hoy.nombre, de:antes.rate, a:hoy.rate });
+    });
+    if(nuevos.length) db.config.commissionLog = (db.config.commissionLog || []).concat(nuevos);
+  }
+  _rateSnap = ahora;
+}
+/* Manda al servidor la corrección única (sólo el admin, que es quien guarda la base completa). */
+function guardarMigracion(){
+  if(!_migraPendiente || !session || !isAdmin() || !db || db._vista) return;
+  _migraPendiente = false;
+  (db.config.commissionLog || []).forEach(e=>{ if(!e.usuario) e.usuario = session.user; });
+  save();
+  toast(msgLoc({ es:"Comisiones unificadas: todas las ventas quedaron al 4% del margen (quedó en el registro).",
+                 en:"Commissions unified: every sale is now at 4% of margin (logged)." }));
+}
 function migrate(d){
   d.config = d.config || {};
   if(d.config.moneda==null) d.config.moneda = "$";
   if(d.config.facturaInicio==null) d.config.facturaInicio = 101;   // numeración US
   if(d.config.emisor==null) d.config.emisor = { nombre:"", direccion:"", email:"", tel:"" };
-  if(d.config.commissionRate==null) d.config.commissionRate = 0.10;  // tasa por defecto para vendedores nuevos (0.10 = 10%)
+  if(d.config.commissionRate==null) d.config.commissionRate = COMISION_BASE;  // tasa por defecto para vendedores nuevos (0.04 = 4%)
   // Vendedores: perfiles a los que se les atribuye la venta (y su comisión). NO son
   // sociedades: son las personas que venden. Cada uno tiene SU PROPIA tasa de comisión
   // (rate). Default Teo/Tonio; editable en Data → Sellers.
@@ -283,6 +336,28 @@ function migrate(d){
   }
   // Punto 11: normalizar fechas viejas mezcladas (ISO vs "01-Jul-2026") a YYYY-MM-DD
   [...(d.compras||[]), ...(d.ventas||[])].forEach(doc=>{ if(doc.fecha) doc.fecha = normISO(doc.fecha) || doc.fecha; });
+  if(!Array.isArray(d.config.commissionLog)) d.config.commissionLog = [];
+  // v130 · Corrección ÚNICA: todas las comisiones al 4% (ver bloque COMISION_BASE).
+  // No corre sobre la vista recortada del vendedor (_vista): esa copia no se guarda entera.
+  if(!d.config.comisionUnificada4V1 && !d._vista){
+    const R = COMISION_BASE, fecha = new Date().toISOString();
+    const nota = "Corrección única: todas las comisiones al 4% del margen";
+    const pct = x => Math.round((+x||0)*10000)/100;
+    const log = [];
+    if(_tasaDistinta(d.config.commissionRate, R)){ log.push({ fecha, tipo:"default", de:d.config.commissionRate, a:R, nota }); d.config.commissionRate = R; }
+    d.config.vendedores.forEach(v=>{
+      if(_tasaDistinta(v.rate, R)){ log.push({ fecha, tipo:"vendedor", vendedorId:v.id, nombre:v.nombre, de:v.rate, a:R, nota }); v.rate = R; }
+    });
+    let n = 0; const antes = {};   // cuántas ventas había con cada tasa (en %)
+    d.ventas.forEach(v=>{
+      if(_tasaDistinta(v.commissionRate, R)){ n++; const k = pct(v.commissionRate)+"%"; antes[k] = (antes[k]||0)+1; v.commissionRate = R; }
+    });
+    if(n) log.push({ fecha, tipo:"ventas", cantidad:n, antes, a:R, nota });
+    d.config.commissionLog = d.config.commissionLog.concat(log);
+    d.config.comisionUnificada4V1 = true;
+    if(log.length) _migraPendiente = true;
+  }
+  _rateSnap = rateSnapshot(d);   // base para detectar cambios de tasa en save()
   return d;
 }
 /* ---- per-store helpers ---- */
@@ -448,6 +523,7 @@ function saveSyncMeta(){ localStorage.setItem(SKEY, JSON.stringify(syncMeta)); }
 
 let editSeq = 0;   // v95: cuenta ediciones locales (para no pisar cambios hechos mientras se sincroniza)
 function save(){
+  registrarCambiosTasa();   // v130: deja registro si cambió alguna tasa de comisión
   editSeq++;
   persistLocal();
   if(session){ syncMeta.dirty=true; saveSyncMeta(); schedulePush(); }
@@ -526,7 +602,7 @@ async function pushNow(force=false){
       if(editSeq===seq){
         db=migrate(j.data); persistLocal();
         syncMeta.syncedRev=j.rev; syncMeta.dirty=false; saveSyncMeta();
-        setSyncState("idle"); render(); return;
+        setSyncState("idle"); render(); guardarMigracion(); return;
       }
       // Hubo cambios locales durante el viaje: el vendedor reintenta (el servidor combina);
       // el admin no adelanta la versión, así el próximo envío cae en "conflicto" y decide.
@@ -548,11 +624,11 @@ async function pullNow(){
     const j=await res.json();
     const serverRev=j.rev||0;
     if(!j.data){ if(hasData(db)) await pushNow(true); else { syncMeta.syncedRev=0; saveSyncMeta(); setSyncState("idle"); } return; }
-    if(serverRev===syncMeta.syncedRev && !syncMeta.dirty){ setSyncState("idle"); return; }
+    if(serverRev===syncMeta.syncedRev && !syncMeta.dirty){ setSyncState("idle"); guardarMigracion(); return; }
     if(serverRev!==syncMeta.syncedRev && !syncMeta.dirty){   // v95: "!==" (tras restaurar un backup la versión del servidor puede ser MENOR)
       // migrate(): el estado del servidor puede venir de una versión vieja de la app
       db=migrate(j.data); syncMeta.syncedRev=serverRev; syncMeta.dirty=false; saveSyncMeta(); persistLocal();
-      setSyncState("idle"); render(); toast(t("core.tt.updated")); return;
+      setSyncState("idle"); render(); toast(t("core.tt.updated")); guardarMigracion(); return;
     }
     if(syncMeta.dirty && serverRev!==syncMeta.syncedRev){
       // v95: un vendedor no ve la pantalla de conflictos. Mandamos sus cambios y el

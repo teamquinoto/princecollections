@@ -39,6 +39,10 @@ function viewDatos(){
       ${row(t("dat.grp.backup"), t("dat.backup.sub"),
         `<button class="btn sm" data-export>${ICO.download}${t("dat.exportjson")}</button>`)}
       ${(isAdmin() && session) ? row(t("pap.title"), t("pap.sub"), `<button class="btn sm" data-papelera>${ICO.trash}${t("pap.open")}</button>`) : ""}
+      ${isAdmin() ? row(msgLoc({es:"Historial de comisiones",en:"Commission history"}),
+          msgLoc({es:"Cada cambio de % de comisión (por defecto o por vendedor) queda registrado con fecha y usuario.",
+                  en:"Every commission % change (default or per seller) is logged with date and user."}),
+          `<button class="btn sm" data-comlog>${msgLoc({es:"Ver registro",en:"View log"})}</button>`) : ""}
     </div>
   </div>
 
@@ -46,6 +50,32 @@ function viewDatos(){
   /* v116 · Se quitaron "Importar JSON" y la "Zona de peligro" (Borrar todo): con la base
      ya migrada no tienen uso en el día a día, y un clic de más reemplazaba o vaciaba todo.
      Exportar JSON queda como copia extra. */
+}
+/* v130 · Registro de cambios de comisión (config.commissionLog), más nuevo arriba. */
+function openComisionLog(){
+  const L=(es,en)=>msgLoc({es,en});
+  const pc=x=> (x==null) ? "—" : (round2((+x||0)*100)+"%");
+  const log=((db.config && db.config.commissionLog) || []).slice().reverse();
+  const qui=e=>{
+    if(e.tipo==="default") return L("Tasa por defecto","Default rate");
+    if(e.tipo==="ventas")  return L(`${e.cantidad} ventas ya cargadas`,`${e.cantidad} existing sales`);
+    const n=esc(e.nombre||e.vendedorId||"—");
+    return e.tipo==="alta" ? L(`Alta de vendedor: ${n}`,`New seller: ${n}`) : L(`Vendedor: ${n}`,`Seller: ${n}`);
+  };
+  const de=e=> e.tipo==="ventas" ? esc(Object.entries(e.antes||{}).map(([k,c])=>`${c} × ${k}`).join(", ")) : pc(e.de);
+  const filas=log.map(e=>`<tr>
+      <td>${esc(String(e.fecha||"").slice(0,16).replace("T"," "))}</td>
+      <td>${esc(e.usuario||"—")}</td>
+      <td>${qui(e)}${e.nota?`<div class="hint u-fs-xs">${esc(e.nota)}</div>`:""}</td>
+      <td>${de(e)}</td><td><b>${pc(e.a)}</b></td></tr>`).join("");
+  const body = log.length
+    ? `<div class="table-scroll"><table class="fintbl"><thead><tr>
+        <th>${L("Fecha (UTC)","Date (UTC)")}</th><th>${L("Usuario","User")}</th><th>${L("Qué cambió","What changed")}</th>
+        <th>${L("Antes","Before")}</th><th>${L("Ahora","Now")}</th></tr></thead><tbody>${filas}</tbody></table></div>`
+    : `<p class="hint">${L("Todavía no hay cambios registrados.","No changes logged yet.")}</p>`;
+  buildModal(L("Historial de comisiones","Commission history"),
+    `<p class="hint u-m0 u-mb3">${L("Las ventas ya cargadas conservan la tasa con la que se cargaron; un cambio aplica a las ventas nuevas.","Existing sales keep the rate they were booked at; a change applies to new sales.")}</p>`+body,
+    [{ cls:"btn", label:L("Cerrar","Close"), act:()=>closeModal() }], true);
 }
 /* ---------- utilidades UI ---------- */
 function esc(s){ return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
@@ -87,6 +117,7 @@ function wire(){
   });
   const exp=m.querySelector("[data-export]"); if(exp) exp.onclick=exportJSON;
   const pap=m.querySelector("[data-papelera]"); if(pap) pap.onclick=()=> openPapelera();   // v96
+  const clg=m.querySelector("[data-comlog]"); if(clg) clg.onclick=()=> openComisionLog();   // v130
   m.querySelectorAll("[data-savecfg]").forEach(cfg=> cfg.onclick=()=>{
     const monEl=document.getElementById("cfgMon"); if(monEl){ db.config.moneda=(monEl.value||"$").trim()||"$"; }
     const fi=parseInt(document.getElementById("cfgFac").value,10); if(!isNaN(fi)&&fi>0) db.config.facturaInicio=fi;
