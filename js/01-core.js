@@ -512,6 +512,253 @@ let session = loadSession();
 function loadSession(){ try{ const r=localStorage.getItem(SESKEY); if(r) return JSON.parse(r); }catch(e){} return null; }
 function saveSession(){ if(session) localStorage.setItem(SESKEY, JSON.stringify(session)); else localStorage.removeItem(SESKEY); }
 
+/* ============================================================
+   v131 · COMBINACIÓN DE 3 VÍAS ENTRE ADMINS (merge)
+   ------------------------------------------------------------
+   ESTE BLOQUE ESTÁ COPIADO IGUAL EN worker.js Y EN js/01-core.js.
+   Si lo cambiás en uno, cambialo en el otro.
+
+   base   = la versión del servidor sobre la que trabajó este admin
+   mio    = lo que manda este admin (base + sus cambios)
+   server = la versión actual del servidor (base + cambios de otros)
+
+   Regla: lo que cambió sólo uno, queda. Si los dos cambiaron EXACTAMENTE
+   lo mismo (la misma venta, la misma compra, el mismo campo), es un
+   conflicto real y no se combina nada (el que llega después elige).
+
+   El stock de un producto se combina por DIFERENCIAS: si los dos
+   vendieron del mismo producto, se restan las dos ventas del mismo lote
+   FIFO. Sólo es conflicto si entre los dos se pasan de ese lote.
+   ============================================================ */
+const MRG_DOC_ATOMICO = new Set(["ventas", "compras", "movimientos", "solicitudes"]);  // se comparan enteros
+const MRG_PROD_STOCK = ["stockPorTienda", "lotes", "stock"];                            // se combinan por diferencias
+const MRG_PROD_BLANDOS = new Set(["precioVenta", "precioVentaPorTienda", "ultimoCosto", "costoNeto", "costoHandling", "costoFlete"]); // último que se tocó gana
+const MRG_EPS = 0.00001;
+
+function mrgEsObj(x) { return x != null && typeof x === "object" && !Array.isArray(x); }
+/* JSON canónico: claves ordenadas y sin srvRev (marca interna del servidor). */
+function mrgCanon(x) {
+  if (x === undefined) return "u";
+  if (x === null || typeof x !== "object") return JSON.stringify(x);
+  if (Array.isArray(x)) return "[" + x.map(mrgCanon).join(",") + "]";
+  return "{" + Object.keys(x).filter(k => k !== "srvRev" && x[k] !== undefined).sort()
+    .map(k => JSON.stringify(k) + ":" + mrgCanon(x[k])).join(",") + "}";
+}
+function mrgIgual(a, b) { return a === b || mrgCanon(a) === mrgCanon(b); }
+function mrgR4(n) { return Math.round((Number(n) || 0) * 10000) / 10000; }
+function mrgConIds(a) { return Array.isArray(a) && a.every(d => mrgEsObj(d) && d.id != null && d.id !== ""); }
+function mrgMapa(a) { const m = new Map(); (a || []).forEach(d => m.set(String(d.id), d)); return m; }
+
+/* Nombre legible de un documento para los avisos. */
+function mrgMay(o) { return { es: o.es.charAt(0).toUpperCase() + o.es.slice(1), en: o.en.charAt(0).toUpperCase() + o.en.slice(1) }; }
+function mrgEtiqueta(col, d) {
+  const x = d || {};
+  if (col === "ventas") return { es: "la venta " + (x.numero || x.id), en: "sale " + (x.numero || x.id) };
+  if (col === "compras") return { es: "la compra " + (x.numero || x.contraparte || x.id), en: "purchase " + (x.numero || x.contraparte || x.id) };
+  if (col === "productos") return { es: "el producto " + (x.nombre || x.sku || x.id), en: "product " + (x.nombre || x.sku || x.id) };
+  if (col === "clientes") return { es: "el cliente " + (x.nombre || x.id), en: "customer " + (x.nombre || x.id) };
+  if (col === "movimientos") return { es: "un movimiento de " + (x.nombre || x.sku || "stock"), en: "a stock movement of " + (x.nombre || x.sku || "stock") };
+  return { es: col + " " + (x.nombre || x.id || ""), en: col + " " + (x.nombre || x.id || "") };
+}
+
+function combinar3(base, mio, server, opts) {
+  opts = opts || {};
+  const STORES = opts.stores || ["akira", "silver"];
+  const ctx = { conflictos: [], avisos: [], cambios: [] };
+  const choca = (es, en) => { if (ctx.conflictos.length < 20) ctx.conflictos.push({ es, en }); };
+
+  /* Movimientos de kardex que agregué / saqué yo, por producto. Cada operación de stock
+     deja movimientos con id único: así se distingue "dos ventas iguales" (se suman) de
+     "mi cambio ya está en el servidor" (p. ej. un reintento: no se vuelve a aplicar). */
+  const idsMov = d => new Set(((d && d.movimientos) || []).map(x => String(x && x.id)));
+  const IB = idsMov(base), IM = idsMov(mio), IT = idsMov(server);
+  const movPorProd = {};
+  const anotar = (pid, tipo, id) => { const k = String(pid); if (!movPorProd[k]) movPorProd[k] = { add: [], del: [] }; movPorProd[k][tipo].push(id); };
+  ((mio && mio.movimientos) || []).forEach(x => { if (x && !IB.has(String(x.id))) anotar(x.productoId, "add", String(x.id)); });
+  ((base && base.movimientos) || []).forEach(x => { if (x && !IM.has(String(x.id))) anotar(x.productoId, "del", String(x.id)); });
+
+  /* --- genérico: objetos, arrays y valores --- */
+  function m3(b, m, t, path, blando) {
+    if (mrgIgual(m, b)) return t;            // yo no lo toqué
+    if (mrgIgual(t, b)) return m;            // el otro no lo tocó
+    // los dos hicimos lo mismo (salvo productos: dos ventas iguales del mismo producto
+    // dejan el producto idéntico en los dos lados, pero son DOS ventas -> se decide en m3Producto)
+    if (!(path.length === 1 && path[0] === "productos") && mrgIgual(m, t)) return t;
+    if (mrgEsObj(m) && mrgEsObj(t) && (b === undefined || mrgEsObj(b))) return m3Obj(b || {}, m, t, path, blando);
+    if (Array.isArray(m) && Array.isArray(t) && (b === undefined || Array.isArray(b))) {
+      const bb = b || [];
+      if (mrgConIds(m) && mrgConIds(t) && mrgConIds(bb)) return m3Ids(bb, m, t, path, path.join("."), blando);
+      // listas sin ids (p. ej. registros): si las dos sólo AGREGARON al final, se suman
+      if (bb.every((x, i) => mrgIgual(x, m[i]) && mrgIgual(x, t[i]))) return t.concat(m.slice(bb.length));
+    }
+    if (blando) return t;
+    choca(`"${path.join(" › ")}" lo cambiaron los dos`, `"${path.join(" › ")}" was changed by both`);
+    return t;
+  }
+  function m3Obj(b, m, t, path, blando) {
+    const out = {};
+    const claves = new Set([...Object.keys(t), ...Object.keys(m), ...Object.keys(b)]);
+    for (const k of claves) {
+      if (k === "srvRev") { if (t.srvRev !== undefined) out.srvRev = t.srvRev; continue; }
+      const v = m3(b[k], m[k], t[k], path.concat(k), blando || (path.length === 0 && k === "stockSnaps"));
+      if (v !== undefined) out[k] = v;
+    }
+    return out;
+  }
+
+  /* --- colecciones con id (ventas, compras, productos, clientes, vendedores…) --- */
+  function m3Ids(b, m, t, path, col, blando) {
+    const B = mrgMapa(b), M = mrgMapa(m), T = mrgMapa(t);
+    const out = [];
+    for (const td of t) {
+      const id = String(td.id), bd = B.get(id), md = M.get(id);
+      if (!bd) {                                         // nuevo del otro
+        if (md && !mrgIgual(md, td) && !blando) choca(`${mrgMay(mrgEtiqueta(col, td)).es}: se creó dos veces distinto`, `${mrgMay(mrgEtiqueta(col, td)).en} was created twice`);
+        out.push(td); continue;
+      }
+      if (!md) {                                         // yo lo borré
+        if (mrgIgual(td, bd)) { ctx.cambios.push("-" + col + " " + id); continue; }
+        if (!blando) choca(`Borraste ${mrgEtiqueta(col, td).es}, pero otro usuario la modificó al mismo tiempo`, `You deleted ${mrgEtiqueta(col, td).en}, but another user changed it`);
+        out.push(td); continue;
+      }
+      out.push(m3Doc(col, bd, md, td, path.concat(id), blando));
+    }
+    for (const md of m) {                                // nuevos míos
+      const id = String(md.id);
+      if (B.has(id) || T.has(id)) continue;
+      out.push(md); ctx.cambios.push("+" + col + " " + id);
+    }
+    for (const [id, bd] of B) {                          // el otro lo borró y yo lo edité
+      if (T.has(id) || !M.has(id)) continue;
+      if (!mrgIgual(M.get(id), bd) && !blando) choca(`Modificaste ${mrgEtiqueta(col, bd).es}, pero otro usuario la borró al mismo tiempo`, `You changed ${mrgEtiqueta(col, bd).en}, but another user deleted it`);
+    }
+    return out;
+  }
+  function m3Doc(col, b, m, t, path, blando) {
+    if (mrgIgual(m, b)) return t;
+    if (mrgIgual(t, b)) return m;
+    if (col !== "productos" && mrgIgual(m, t)) return t;
+    if (col === "productos") return m3Producto(b, m, t, path);
+    if (MRG_DOC_ATOMICO.has(col)) {
+      if (!blando) choca(`${mrgMay(mrgEtiqueta(col, t)).es}: la modificaron los dos al mismo tiempo`, `${mrgMay(mrgEtiqueta(col, t)).en} was changed by both at the same time`);
+      return t;
+    }
+    return m3Obj(b, m, t, path, blando);                 // clientes, vendedores, etc.: campo por campo
+  }
+
+  /* --- productos: datos campo por campo + stock por diferencias --- */
+  function m3Producto(b, m, t, path) {
+    const out = {};
+    const claves = new Set([...Object.keys(t), ...Object.keys(m), ...Object.keys(b)]);
+    for (const k of claves) {
+      if (MRG_PROD_STOCK.includes(k)) continue;
+      if (k === "srvRev") { if (t.srvRev !== undefined) out.srvRev = t.srvRev; continue; }
+      let v;
+      if (MRG_PROD_BLANDOS.has(k)) v = mrgIgual(m[k], b[k]) ? t[k] : m[k];
+      else {
+        const antes = ctx.conflictos.length;
+        v = m3(b[k], m[k], t[k], path.concat(k), false);
+        if (ctx.conflictos.length > antes) {             // mensaje más claro que el genérico
+          ctx.conflictos.length = antes;
+          choca(`${mrgMay(mrgEtiqueta("productos", t)).es}: los dos cambiaron "${k}"`, `${mrgMay(mrgEtiqueta("productos", t)).en}: both changed "${k}"`);
+        }
+      }
+      if (v !== undefined) out[k] = v;
+    }
+    const sb = { s: b.stockPorTienda || {}, l: b.lotes || {} };
+    const sm = { s: m.stockPorTienda || {}, l: m.lotes || {} };
+    const st = { s: t.stockPorTienda || {}, l: t.lotes || {} };
+    let stock;
+    if (mrgIgual(sm, sb)) stock = st;                    // yo no toqué el stock
+    else if (mrgIgual(st, sb)) stock = sm;               // el otro no lo tocó
+    else {
+      const mv = movPorProd[String(t.id)] || { add: [], del: [] };
+      if (!mv.add.length && !mv.del.length) stock = mrgIgual(sm, st) ? st : m3Stock(sb, sm, st, t);
+      else if (mv.add.every(id => IT.has(id)) && mv.del.every(id => !IT.has(id))) stock = st;          // lo mío ya está en el servidor
+      else if (mv.add.every(id => !IT.has(id)) && mv.del.every(id => IT.has(id))) stock = m3Stock(sb, sm, st, t);   // operaciones distintas: se suman
+      else { choca(`${mrgMay(mrgEtiqueta("productos", t)).es}: los dos movieron el mismo stock al mismo tiempo`, `${mrgMay(mrgEtiqueta("productos", t)).en}: both moved the same stock at the same time`); stock = st; }
+    }
+    out.stockPorTienda = JSON.parse(JSON.stringify(stock.s));
+    out.lotes = JSON.parse(JSON.stringify(stock.l));
+    out.stock = mrgR4(STORES.reduce((a, s) => a + (Number(out.stockPorTienda[s]) || 0), 0));
+    return out;
+  }
+  function m3Stock(b, m, t, prod) {
+    const nombre = mrgMay(mrgEtiqueta("productos", prod));
+    const falla = () => { choca(`${nombre.es}: entre los dos se vendió/movió más de lo que había`, `${nombre.en}: together you sold/moved more than was available`); return t; };
+    // 1) unidades por sociedad: lo del otro + mi diferencia
+    const s = {};
+    for (const k of new Set([...Object.keys(t.s), ...Object.keys(m.s), ...Object.keys(b.s)])) {
+      const tv = Number(t.s[k]) || 0, mv = Number(m.s[k]) || 0, bv = Number(b.s[k]) || 0;
+      const v = mrgR4(tv + (mv - bv));
+      if (v < -MRG_EPS && tv >= -MRG_EPS && mv >= -MRG_EPS) return falla();
+      s[k] = v;
+    }
+    // 2) lotes FIFO, capa por capa (cada capa tiene su id)
+    const l = {};
+    for (const k of new Set([...Object.keys(t.l), ...Object.keys(m.l), ...Object.keys(b.l)])) {
+      const bl = b.l[k] || [], ml = m.l[k] || [], tl = t.l[k] || [];
+      if (!mrgConIds(bl) || !mrgConIds(ml) || !mrgConIds(tl)) return falla();
+      if (mrgIgual(ml, bl)) { l[k] = tl; continue; }
+      if (mrgIgual(tl, bl)) { l[k] = ml; continue; }
+      const B = mrgMapa(bl), M = mrgMapa(ml), T = mrgMapa(tl);
+      const res = [];
+      for (const tc of tl) {
+        const id = String(tc.id), bc = B.get(id);
+        if (!bc) { res.push(tc); continue; }               // capa nueva del otro
+        const mc = M.get(id);
+        const dq = (mc ? Number(mc.cantidad) || 0 : 0) - (Number(bc.cantidad) || 0);
+        if (mc) {                                          // fuera de la cantidad, las capas no se editan
+          const { cantidad: _a, ...restoM } = mc, { cantidad: _b, ...restoB } = bc;
+          if (!mrgIgual(restoM, restoB)) return falla();
+        }
+        const q = mrgR4((Number(tc.cantidad) || 0) + dq);
+        if (q < -MRG_EPS) return falla();                  // los dos consumieron la misma capa y no alcanzaba
+        if (q > MRG_EPS) res.push({ ...tc, cantidad: q });
+      }
+      for (const [id, bc] of B) {                          // capas que el otro ya agotó
+        if (T.has(id)) continue;
+        const mc = M.get(id);
+        const dq = (mc ? Number(mc.cantidad) || 0 : 0) - (Number(bc.cantidad) || 0);
+        if (dq < -MRG_EPS || dq > MRG_EPS) return falla();
+      }
+      // capas nuevas mías (compras, devoluciones): adelante si yo las puse adelante
+      const nuevas = ml.filter(c => !B.has(String(c.id)) && !T.has(String(c.id)));
+      const iPrimeraVieja = ml.findIndex(c => B.has(String(c.id)));
+      const adelante = nuevas.filter(c => iPrimeraVieja >= 0 && ml.indexOf(c) < iPrimeraVieja);
+      const atras = nuevas.filter(c => !adelante.includes(c));
+      l[k] = adelante.concat(res, atras);
+    }
+    return { s, l };
+  }
+
+  const data = m3Obj(base || {}, mio || {}, server || {}, [], false);
+
+  /* --- números de factura repetidos: renumera la venta nueva mía --- */
+  if (!ctx.conflictos.length && Array.isArray(data.ventas)) {
+    const Bv = new Set((base && base.ventas || []).map(v => String(v.id)));
+    const Tv = new Set((server && server.ventas || []).map(v => String(v.id)));
+    const inicio = parseInt(data.config && data.config.facturaInicio, 10) || 101;
+    const num = v => parseInt(String(v.numero || "").replace(/[^\d]/g, ""), 10);
+    const usado = (n, id) => data.ventas.some(x => String(x.id) !== id && String(x.numero || "").trim().toLowerCase() === String(n || "").trim().toLowerCase());
+    for (const v of data.ventas) {
+      const id = String(v.id);
+      if (Bv.has(id) || Tv.has(id) || !v.numero || !usado(v.numero, id)) continue;
+      let max = inicio - 1;
+      data.ventas.forEach(x => { const n = num(x); if (!isNaN(n) && n > max) max = n; });
+      const antes = String(v.numero), nuevo = String(max + 1);
+      v.numero = nuevo;
+      (data.movimientos || []).forEach(mv => {
+        if (mv.refId === v.id && typeof mv.ref === "string") mv.ref = mv.ref.replace(antes, nuevo);
+      });
+      ctx.avisos.push({ es: `Otro usuario usó el número de factura ${antes} al mismo tiempo: tu venta quedó como ${nuevo}`,
+                        en: `Another user took invoice number ${antes} at the same time: your sale is now ${nuevo}` });
+    }
+  }
+  return { data, conflictos: ctx.conflictos, avisos: ctx.avisos, cambios: ctx.cambios };
+}
+/* ===================== fin bloque v131 ===================== */
+
 /* ---------- Sincronización con el servidor ---------- */
 let syncMeta = loadSyncMeta();       // { syncedRev, dirty }
 let syncState = session ? "idle" : "off";
@@ -582,14 +829,52 @@ function stateUrl(){ return apiBase()+"/state?space="+encodeURIComponent(session
 
 function schedulePush(){ if(!session) return; clearTimeout(pushTimer); pushTimer=setTimeout(()=>pushNow(), 800); }
 
+/* v131: textos de los choques reales que devolvió el servidor (o la combinación local). */
+function textoConflictos(l){
+  const lista = (Array.isArray(l) ? l : []).map(msgLoc).filter(Boolean);
+  if(!lista.length) return "";
+  return lista.slice(0,3).join(" · ") + (lista.length>3 ? " (+"+(lista.length-3)+")" : "");
+}
+let pushEnCurso = false;   // v131: para que la sincronización automática no se cruce con un guardado
+function modalAbierto(){ const r=document.getElementById("modalRoot"); return !!(r && r.firstElementChild); }
+/* v131 · El servidor combinó y devolvió la versión final, pero mientras viajaba el pedido
+   hubo ediciones locales. Se combinan acá (base = lo que se envió). Si hay un modal abierto
+   se espera a que cierre: el modal tiene referencias a los objetos de la base actual. */
+let pendienteComb = null;   // { enviado, data, rev }
+function aplicarPendienteComb(){
+  const pc = pendienteComb; pendienteComb = null;
+  const r = combinar3(JSON.parse(pc.enviado), db, migrate(pc.data), { stores: STORE_IDS });
+  if(r.conflictos.length){
+    conflictPayload={ conflict:true, rev:pc.rev, data:pc.data, conflictos:r.conflictos };
+    setSyncState("conflict"); toast(t("core.tt.newer")+" — "+textoConflictos(r.conflictos),"warn");
+    if(view==="datos") render(); return false;
+  }
+  db=r.data; _rateSnap=rateSnapshot(db); persistLocal();
+  syncMeta.syncedRev=pc.rev; syncMeta.dirty=true; saveSyncMeta();
+  render(); return true;
+}
 async function pushNow(force=false){
   if(!session) return;
+  if(pushEnCurso && !force){ schedulePush(); return; }   // v131: un guardado por vez; el siguiente sale cuando vuelve éste
+  if(pendienteComb && !force){
+    if(modalAbierto()){ schedulePush(); return; }
+    if(!aplicarPendienteComb()) return;
+  }
   setSyncState("saving");
+  pushEnCurso = true;
   const seq = editSeq;   // si el usuario edita mientras viaja el pedido, no pisamos esos cambios
   try{
-    const res=await apiFetch(stateUrl(),{ method:"PUT", headers:authHeaders(), body:JSON.stringify({ data:db, baseRev:syncMeta.syncedRev, force }) });
+    // v131: guardamos exactamente lo que mandamos: si el servidor combina y mientras tanto
+    // hubo ediciones locales, se combinan de nuevo acá sin perder nada.
+    const enviado = JSON.stringify(db);
+    const res=await apiFetch(stateUrl(),{ method:"PUT", headers:authHeaders(), body:'{"data":'+enviado+',"baseRev":'+(Number(syncMeta.syncedRev)||0)+',"force":'+(force?"true":"false")+'}' });
     if(res.status===401){ toast(t("core.tt.expired"),"warn"); forceLogout(); return; }
-    if(res.status===409){ conflictPayload=await res.json(); setSyncState("conflict"); toast(t("core.tt.newer"),"warn"); if(view==="datos") render(); return; }
+    if(res.status===409){
+      conflictPayload=await res.json(); setSyncState("conflict");
+      const det = textoConflictos(conflictPayload.conflictos);   // v131: decimos QUÉ chocó
+      toast(det ? t("core.tt.newer")+" — "+det : t("core.tt.newer"),"warn");
+      if(view==="datos") render(); return;
+    }
     // v95: borrado masivo frenado por el servidor -> se resuelve como un conflicto (Datos)
     if(res.status===422){ const j=await res.json(); conflictPayload=j; setSyncState("conflict"); toast(srvErrText(j,422),"warn"); if(view==="datos") render(); return; }
     if([400,403,413,503].includes(res.status)){ let j={}; try{ j=await res.json(); }catch(_){} toast(srvErrText(j,res.status),"warn"); setSyncState("offline"); return; }
@@ -604,19 +889,24 @@ async function pushNow(force=false){
         syncMeta.syncedRev=j.rev; syncMeta.dirty=false; saveSyncMeta();
         setSyncState("idle"); render(); guardarMigracion(); return;
       }
-      // Hubo cambios locales durante el viaje: el vendedor reintenta (el servidor combina);
-      // el admin no adelanta la versión, así el próximo envío cae en "conflicto" y decide.
-      if(isSeller()){ syncMeta.syncedRev=j.rev; saveSyncMeta(); }
-      setSyncState("idle"); schedulePush(); return;
+      // Hubo cambios locales durante el viaje: el vendedor reintenta (el servidor combina).
+      if(isSeller()){ syncMeta.syncedRev=j.rev; saveSyncMeta(); setSyncState("idle"); schedulePush(); return; }
+      // v131 · admin: lo que editó mientras viajaba se combina con la versión final del
+      // servidor (ahora, o cuando cierre el modal abierto) y se vuelve a mandar.
+      pendienteComb = { enviado, data:j.data, rev:j.rev };
+      setSyncState("idle");
+      if(!modalAbierto() && !aplicarPendienteComb()) return;
+      schedulePush(); return;
     }
     syncMeta.syncedRev=j.rev; if(editSeq===seq) syncMeta.dirty=false; saveSyncMeta();
     setSyncState("idle");
   }catch(e){ console.warn("push fail", e); setSyncState("offline"); }
+  finally{ pushEnCurso = false; }
 }
 
-async function pullNow(){
+async function pullNow(silencioso){
   if(!session) return;
-  setSyncState("saving");
+  if(!silencioso) setSyncState("saving");   // v131: la sincronización automática no hace parpadear el estado
   try{
     const res=await apiFetch(stateUrl(),{ method:"GET", headers:authHeaders() });
     if(res.status===401){ toast(t("core.tt.expired"),"warn"); forceLogout(); return; }
@@ -631,10 +921,10 @@ async function pullNow(){
       setSyncState("idle"); render(); toast(t("core.tt.updated")); guardarMigracion(); return;
     }
     if(syncMeta.dirty && serverRev!==syncMeta.syncedRev){
-      // v95: un vendedor no ve la pantalla de conflictos. Mandamos sus cambios y el
-      // servidor los combina con la versión actual (sus ventas se suman, no se pisan).
-      if(isSeller()){ await pushNow(); return; }
-      conflictPayload=j; setSyncState("conflict"); if(view==="datos") render(); return;
+      // v95: el vendedor manda sus cambios y el servidor los combina con la versión actual.
+      // v131: el admin también: el servidor combina documento por documento y sólo
+      // devuelve "conflicto" si los dos tocaron justo lo mismo.
+      await pushNow(); return;
     }
     if(syncMeta.dirty){ await pushNow(); return; }
     setSyncState("idle");
@@ -643,8 +933,23 @@ async function pullNow(){
 
 function hasData(d){ return (d.productos&&d.productos.length)||(d.compras&&d.compras.length)||(d.ventas&&d.ventas.length); }
 
+/* v131 · Sincronización automática: cada 30 s baja lo que cargaron los demás (si la app
+   está a la vista, sin cambios pendientes y sin nada a medio escribir). Así el tiempo en
+   que dos admins pueden pisarse queda en segundos. */
+const SYNC_AUTO_MS = 30000;
+function puedeSyncAuto(){
+  if(!session || document.hidden || pushEnCurso || syncMeta.dirty) return false;
+  if(syncState!=="idle") return false;                     // guardando, offline o en conflicto
+  const a = document.activeElement;                        // escribiendo en un campo: no re-dibujar
+  if(a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.tagName==="SELECT" || a.isContentEditable)) return false;
+  if(modalAbierto() || pendienteComb) return false;          // modal abierto o combinación pendiente
+  return true;
+}
+setInterval(()=>{ if(puedeSyncAuto()) pullNow(true); }, SYNC_AUTO_MS);
+
 function resolveConflict(keepLocal){
   if(!conflictPayload) return;
+  pendienteComb = null;   // v131
   // v95: NO adelantamos syncedRev: así el servidor sabe qué versión tenías y rescata
   // las ventas que cargaron los vendedores mientras tanto.
   if(keepLocal){ pushNow(true); }
