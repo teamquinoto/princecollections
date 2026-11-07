@@ -74,7 +74,7 @@ function filtrarProds(f){
     // Punto 9: en vista de UN local, sólo productos que pertenecen a ese local
     if(activeStore!=="all" && !perteneceAStore(p, activeStore)) return false;
     const sf = stockEnFoco(p);                   // stock under the active store focus
-    if(q){ const hay=((p.nombre||"")+" "+(p.sku||"")).toLowerCase(); if(!hay.includes(q)) return false; }
+    if(q){ const hay=((p.nombre||"")+" "+skuHay(p)).toLowerCase(); if(!hay.includes(q)) return false; }
     if(f.saga && sagaDe(p)!==f.saga) return false;
     if(f.idioma && (p.idioma||"")!==f.idioma) return false;
     // En modo "in transit" listamos sólo productos con mercadería en camino y NO

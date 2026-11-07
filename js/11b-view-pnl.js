@@ -63,7 +63,7 @@ function viewPnL(){
   const head = `
   <div class="head"><div class="title"><h2>${t("pnl.title")}</h2><p>${subTxt}</p></div>
     <div class="u-gap2 actions">
-      ${isAdmin()?`<button class="btn primary" id="pnl_export">${t("pnl.export")}</button>`:""}
+      ${isAdmin()?`<button class="btn primary" id="pnl_export">${ICO.xls}${t("pnl.export")}</button>`:""}
     </div>
   </div>
   ${finFilterBarHTML()}

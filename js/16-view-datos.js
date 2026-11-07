@@ -1,55 +1,80 @@
 /* ============================================================
    VISTA: Datos
    ============================================================ */
+/* v138 · textos de Configuración → General (reordenada) */
+(function(){
+  try{
+    Object.assign(I18N.en, {
+      "cfg.title":"General settings", "cfg.sub":"Company details, collection accounts and your account.",
+      "cfg.company":"Company & invoicing", "cfg.company.hint":"These details print on the PDF invoices.",
+      "cfg.contact":"Company details", "cfg.save":"Save changes", "cfg.saved.hint":"Changes apply to new documents.",
+      "cfg.acct":"Account & data", "cfg.acct.hint":"Your session, sync and backups.",
+      "cfg.session":"Session", "cfg.session.sub":"{u} · {role} · inventory {sp}, rev {rev}{dirty}",
+      "cfg.numbering":"Numbering · first number", "cfg.num.fac":"Invoice", "cfg.num.remu":"Delivery note U", "cfg.num.rema":"Delivery note A",
+      "cfg.inv.u":"Each document starts from this number. Only used until the first one is issued."
+    });
+    Object.assign(I18N.es, {
+      "cfg.title":"Configuración general", "cfg.sub":"Datos de la empresa, cuentas de cobro y tu cuenta.",
+      "cfg.company":"Empresa y facturación", "cfg.company.hint":"Estos datos salen en la factura en PDF.",
+      "cfg.contact":"Datos de la empresa", "cfg.save":"Guardar cambios", "cfg.saved.hint":"Los cambios aplican a los documentos nuevos.",
+      "cfg.acct":"Cuenta y datos", "cfg.acct.hint":"Tu sesión, la sincronización y las copias.",
+      "cfg.session":"Sesión", "cfg.session.sub":"{u} · {role} · inventario {sp}, rev {rev}{dirty}",
+      "cfg.numbering":"Numeración · número inicial", "cfg.num.fac":"Factura", "cfg.num.remu":"Remito U", "cfg.num.rema":"Remito A",
+      "cfg.inv.u":"Cada documento arranca desde este número. Solo se usa hasta emitir el primero."
+    });
+  }catch(e){ console.warn("cfg i18n", e); }
+})();
 function viewDatos(){
   const conf = syncState==="conflict";
   const roleLbl = isAdmin() ? t("dat.acct.admin") : t("dat.acct.seller",{name:esc((session&&session.name)||"—")});
-  /* v104 · General reacomodado: 2 columnas en pantallas anchas, formularios compactos,
-     botón Guardar al pie de su tarjeta y "Datos y seguridad" como lista de ajustes. */
+  /* v138 · Configuración → General reordenada (igual en las dos apps):
+       fila 1 · Empresa y facturación | Cuentas de cobro (misma altura)
+       fila 2 · Cuenta y datos, a lo ancho (lista de ajustes)
+     v139/v86: se quitó "Numeración": ya están facturando y cada documento sigue solo
+     desde el último emitido (los valores guardados no se tocan).
+     Estilos en configuracion.css. */
   const em = db.config.emisor||{};
-  const row = (tit,sub,acts,danger)=>`<div class="set-row${danger?" is-danger":""}">
-      <div class="set-txt"><b>${tit}</b><span class="hint">${sub}</span></div>
-      <div class="set-acts">${acts}</div></div>`;
+  const row = (tit,sub,acts)=>`<div class="cfg-row"><div class="cfg-row-txt"><b>${tit}</b><span>${sub}</span></div><div class="cfg-row-acts">${acts}</div></div>`;
+  const fld = (id,label,val,cls,extra)=>{ const num = !!(cls && cls.includes("num")), c = num ? (cls||"").replace("num","").trim() : (cls||"");
+    return `<div class="field ${c}"><label for="${id}">${label}${extra||""}</label><input class="inp${num?" num":""}" id="${id}" value="${esc(val)}"${num?' inputmode="numeric"':""}></div>`; };
+  const sesion = t("cfg.session.sub",{u:`<b>${esc(session?session.user:"—")}</b>`, role:esc(roleLbl), sp:`<b>${esc(session?session.space:"main")}</b>`, rev:syncMeta.syncedRev, dirty:syncMeta.dirty?t("dat.inv.dirty"):""});
   return `
-  <div class="head"><div class="title"><h2>${t("dat.title")}</h2><p>${t("dat.sub")}</p></div></div>
+  <div class="head"><div class="title"><h2>${t("cfg.title")}</h2><p>${t("cfg.sub")}</p></div></div>
 
-  <div class="dat-grid">
-  <div class="panel dat-card dat-full">
-    <div class="phead"><h3>${t("dat.grp.billing")}</h3><span class="hint">${t("dat.issuer.hint")}</span></div>
-    <div class="grid-form bill-form">
-      <div class="field bf-name"><label>${t("dat.issuer.name")}</label><input class="inp" id="cfgEmNom" value="${esc(em.nombre||"")}"></div>
-      <div class="field bf-addr"><label>${t("dat.issuer.addr")}</label><input class="inp" id="cfgEmDir" value="${esc(em.direccion||"")}"></div>
-      <div class="field"><label>${t("dat.issuer.email")}</label><input class="inp" id="cfgEmMail" value="${esc(em.email||"")}"></div>
-      <div class="field"><label>${t("dat.issuer.phone")}</label><input class="inp" id="cfgEmTel" value="${esc(em.tel||"")}"></div>
-      <div class="field"><label>${t("dat.set.startinv")}</label><input class="inp num" id="cfgFac" value="${esc(String(db.config.facturaInicio||101))}"></div>
-    </div>
-    <div class="pfoot"><button class="btn primary sm" data-savecfg>${ICO.save}${t("common.save")}</button></div>
-  </div>
+  <div class="cfg-grid">
+    <section class="panel cfg-card">
+      <div class="cfg-head"><div><h3>${t("cfg.company")}</h3><p>${t("cfg.company.hint",{rem:""})}</p></div></div>
+      <div class="cfg-body">
+        <div class="cfg-form">
+          ${fld("cfgEmNom", t("dat.issuer.name"), em.nombre||"", "cfg-wide")}
+          ${fld("cfgEmDir", t("dat.issuer.addr"), em.direccion||"", "cfg-wide")}
+          ${fld("cfgEmMail", t("dat.issuer.email"), em.email||"")}
+          ${fld("cfgEmTel", t("dat.issuer.phone"), em.tel||"")}
+        </div>
+      </div>
+      <div class="cfg-foot"><span class="hint">${t("cfg.saved.hint")}</span><button class="btn primary sm" data-savecfg>${ICO.save||""}${t("cfg.save")}</button></div>
+    </section>
 
-  <div class="panel dat-full">
-    <div class="phead"><h3>${t("dat.grp.acctdata")}</h3><span class="hint" data-syncchip>●</span></div>
-    ${conf ? `<div class="banner warn" style="margin:14px 18px 0"><div>${t("dat.conf.title")}
-        <div class="u-mt2 u-flex u-gap2 u-wrap">
-          <button class="btn sm" data-confserver>${t("dat.conf.takeserver")}</button>
-          <button class="btn sm danger" data-conflocal>${t("dat.conf.overwrite")}</button>
-        </div></div></div>`:""}
-    <div class="set-list">
-      ${row(t("dat.acct"), t("dat.acct.signedin",{u:`<b>${esc(session?session.user:"—")}</b>`,role:`<b>${esc(roleLbl)}</b>`})+" "+t("dat.inv.line",{sp:`<b>${esc(session?session.space:"main")}</b>`,rev:syncMeta.syncedRev,dirty:syncMeta.dirty?t("dat.inv.dirty"):""})+".",
-        `<button class="btn sm" data-syncnow>${ICO.sync}${t("dat.syncnow")}</button><button class="btn sm" data-logout>${ICO.logout}${t("tb.logout")}</button>`)}
-      ${row(t("dat.grp.backup"), t("dat.backup.sub"),
-        `<button class="btn sm" data-export>${ICO.download}${t("dat.exportjson")}</button>`)}
-      ${(isAdmin() && session) ? row(t("pap.title"), t("pap.sub"), `<button class="btn sm" data-papelera>${ICO.trash}${t("pap.open")}</button>`) : ""}
-      ${isAdmin() ? row(msgLoc({es:"Historial de comisiones",en:"Commission history"}),
-          msgLoc({es:"Cada cambio de % de comisión (por defecto o por vendedor) queda registrado con fecha y usuario.",
-                  en:"Every commission % change (default or per seller) is logged with date and user."}),
-          `<button class="btn sm" data-comlog>${msgLoc({es:"Ver registro",en:"View log"})}</button>`) : ""}
-    </div>
-  </div>
+    ${cuentasCobroCardHTML("")}
 
+      <section class="panel cfg-card cfg-full">
+        <div class="cfg-head"><div><h3>${t("cfg.acct")}</h3><p>${t("cfg.acct.hint")}</p></div><span class="hint" data-syncchip>●</span></div>
+        ${conf ? `<div class="banner warn cfg-conf"><div>${t("dat.conf.title")}
+            <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn sm" data-confserver>${t("dat.conf.takeserver")}</button>
+              <button class="btn sm danger" data-conflocal>${t("dat.conf.overwrite")}</button>
+            </div></div></div>`:""}
+        <div class="cfg-list">
+          ${row(t("cfg.session"), sesion, `<button class="btn sm" data-syncnow>${ICO.sync||""}${t("dat.syncnow")}</button><button class="btn sm" data-logout>${ICO.logout||""}${t("tb.logout")}</button>`)}
+          ${row(t("dat.grp.backup"), t("dat.backup.sub"), `<button class="btn sm" data-export>${ICO.download||""}${t("dat.exportjson")}</button>`)}
+          ${(isAdmin() && session) ? row(t("pap.title"), t("pap.sub"), `<button class="btn sm" data-papelera>${ICO.trash||""}${t("pap.open")}</button>`) : ""}
+          ${isAdmin() ? row(msgLoc({es:"Historial de comisiones",en:"Commission history"}),
+              msgLoc({es:"Cada cambio de % de comisión (por defecto o por vendedor) queda registrado con fecha y usuario.",
+                      en:"Every commission % change (default or per seller) is logged with date and user."}),
+              `<button class="btn sm" data-comlog>${ICO.list}${msgLoc({es:"Ver registro",en:"View log"})}</button>`) : ""}
+        </div>
+      </section>
   </div>`;
-  /* v116 · Se quitaron "Importar JSON" y la "Zona de peligro" (Borrar todo): con la base
-     ya migrada no tienen uso en el día a día, y un clic de más reemplazaba o vaciaba todo.
-     Exportar JSON queda como copia extra. */
 }
 /* v130 · Registro de cambios de comisión (config.commissionLog), más nuevo arriba. */
 function openComisionLog(){
@@ -120,7 +145,7 @@ function wire(){
   const clg=m.querySelector("[data-comlog]"); if(clg) clg.onclick=()=> openComisionLog();   // v130
   m.querySelectorAll("[data-savecfg]").forEach(cfg=> cfg.onclick=()=>{
     const monEl=document.getElementById("cfgMon"); if(monEl){ db.config.moneda=(monEl.value||"$").trim()||"$"; }
-    const fi=parseInt(document.getElementById("cfgFac").value,10); if(!isNaN(fi)&&fi>0) db.config.facturaInicio=fi;
+    const fe=document.getElementById("cfgFac"); if(fe){ const fi=parseInt(fe.value,10); if(!isNaN(fi)&&fi>0) db.config.facturaInicio=fi; }   // v139/v86: ya no se muestra (la numeración sigue sola)
     const commEl=document.getElementById("cfgComm");   // sólo lo renderiza el admin
     if(commEl){ const pct=parseNum(commEl.value); if(!isNaN(pct)) db.config.commissionRate = Math.min(1, Math.max(0, round2(pct)/100)); }
     db.config.emisor = {
@@ -184,7 +209,7 @@ async function apiUsers(method, body, qs){
   if(!res.ok) throw new Error(srvErrText(j,res.status));
   return j;
 }
-function usrRoleLabel(r){ return r==="admin"?t("usr.role.admin"):(r==="store"?t("usr.role.store"):t("usr.role.seller")); }
+function usrRoleLabel(r){ return r==="admin"?t("usr.role.admin"):(r==="store"?t("usr.role.store"):(r==="editor"?t("usr.role.editor"):t("usr.role.seller"))); }
 function clienteNombre(id){ const c=(db.clientes||[]).find(x=>x.id===id); return c?(c.nombre||c.id):(id||"\u2014"); }
 
 function viewUsuarios(){
@@ -204,6 +229,7 @@ function viewUsuarios(){
         <div class="field" style="flex:0 0 130px"><label>${t("usr.f.role")}</label>
           <select class="inp" id="uNewRole">
             <option value="seller">${t("usr.role.seller")}</option>
+            <option value="editor">${t("usr.role.editor")}</option>
             <option value="admin">${t("usr.role.admin")}</option>
           </select></div>
         <div class="field u-when-seller" style="flex:0 0 90px"><label>${t("usr.f.comm")}</label><input class="inp num" id="uComm" placeholder="${esc(String(round2((db.config.commissionRate||0)*100)))}"></div>
@@ -227,7 +253,7 @@ function usrSubline(u){
   const role=usrRoleLabel(u.role);
   if(u.role==="seller"){ const v=vendedorById(u.vendedorId); const r=v?round2((v.rate!=null?v.rate:(db.config.commissionRate||0))*100):null; return "@"+u.user+" \u00b7 "+role+(r!=null?(" \u00b7 "+r+"% com."):""); }
   if(u.role==="store"){ return "@"+u.user+" \u00b7 "+role+" \u00b7 "+clienteNombre(u.clienteId); }
-  return "@"+u.user+" \u00b7 "+role+(u.totp?" \u00b7 2FA":"");
+  return "@"+u.user+" \u00b7 "+role+(u.role==="editor"&&u.editaOtros?" \u00b7 "+t("usr.sub.editothers"):"")+(u.totp?" \u00b7 2FA":"");
 }
 /* v102 · Una sola lista: accesos (admins, vendedores, clientes) + vendedores que sólo existen
    para atribuir comisión (sin usuario en la app). Antes estos iban en una lista aparte. */
@@ -350,9 +376,14 @@ function openUsuarioModal(u){
       <div class="field"><label>${t("usr.f.role")}</label>
         <select class="inp" id="eRole">
           <option value="seller" ${u.role==="seller"?"selected":""}>${t("usr.role.seller")}</option>
+          <option value="editor" ${u.role==="editor"?"selected":""}>${t("usr.role.editor")}</option>
           <option value="admin" ${u.role==="admin"?"selected":""}>${t("usr.role.admin")}</option>
         </select></div>
       <div class="field um-when-seller" style="${u.role==="seller"?"":"display:none"}"><label>${t("usr.f.comm")}</label><input class="inp num" id="eComm" value="${esc(String(rate))}"></div>
+      <div class="field um-when-editor" style="grid-column:1/-1;${u.role==="editor"?"":"display:none"}">
+        <label class="u-flex u-items-center u-gap2" style="text-transform:none;letter-spacing:0;font-size:var(--fs-sm);font-weight:600;color:var(--text);cursor:pointer">
+          <input type="checkbox" id="eOtros" ${u.editaOtros?"checked":""} style="width:16px;height:16px;accent-color:var(--accent)"> ${t("usr.f.editothers")}</label>
+        <div class="hint" style="font-size:12px;margin-top:4px">${t("usr.f.editothers.h")}</div></div>
     </div>`;
   buildModal(t("usr.md.title")+" \u00b7 "+(u.name||u.user), body, [
     { cls:"btn danger", label:t("usr.del"), act: async()=>{
@@ -369,6 +400,7 @@ function openUsuarioModal(u){
         const name=(document.getElementById("eName").value||"").trim();
         const pass=document.getElementById("ePass").value||"";
         const body2={ user:u.user, role, name };
+        if(role==="editor"){ const eo=document.getElementById("eOtros"); body2.editaOtros = !!(eo && eo.checked); }
         if(pass) body2.pass=pass;
         if(role==="seller"){
           const vid=(u.role==="seller" && u.vendedorId) ? u.vendedorId : u.user;
@@ -392,6 +424,7 @@ function openUsuarioModal(u){
   if(er) er.onchange=()=>{
     const r=er.value;
     document.querySelectorAll(".um-when-seller").forEach(el=> el.style.display = r==="seller"?"":"none");
+    document.querySelectorAll(".um-when-editor").forEach(el=> el.style.display = r==="editor"?"":"none");
     document.querySelectorAll(".um-when-store").forEach(el=> el.style.display = r==="store"?"":"none");
   };
 }

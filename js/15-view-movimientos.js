@@ -115,13 +115,13 @@ function filtrarMovs(){
 function movOrigenHTML(m){
   const raw = String(m.ref||"");
   const sub = x => x ? `<div class="mv-sub" title="${esc(x)}">${esc(x)}</div>` : "";
-  const main = x => `<span class="mv-reftxt">${esc(x)}</span>`;
+  const main = x => `<div class="mv-reftxt" title="${esc(x)}">${esc(x)}</div>`;
   if((m.refTipo==="venta"||m.refTipo==="compra") && m.refId){
     const mm = /^(?:Sale|Purchase|Venta|Compra)\s*([^·]*?)\s*(?:·\s*(.*))?$/.exec(raw) || [];
     // smartCase sólo para MOSTRAR: el texto guardado del kardex no se modifica
     const num = (mm[1]||"").trim(), quien = nombreVis(mm[2]);
     const kind = m.refTipo==="venta" ? t("mov.ref.sale") : t("mov.ref.purchase");
-    return `<button type="button" class="mv-doc" data-verdoc="${m.refTipo}:${esc(m.refId)}">${esc(kind)}${num?` #${esc(num)}`:""}</button>` + sub(quien);
+    return `<button type="button" class="mv-doc" data-verdoc="${m.refTipo}:${esc(m.refId)}" title="${esc(kind)}${num?` #${esc(num)}`:""}">${esc(kind)}${num?` #${esc(num)}`:""}</button>` + sub(quien);
   }
   // v96: la bóveda se ve igual que una venta/compra: nombre en azul (abre Inversiones) + detalle en gris
   if(m.tipo==="inv-out" || m.tipo==="inv-return")
@@ -131,6 +131,8 @@ function movOrigenHTML(m){
     const esApertura = [I18N.en["prod.obs.opening"], I18N.es["prod.obs.opening"]].includes(raw);
     return main(esApertura ? t("prod.obs.opening") : t("mov.ref.adjust")) + sub(esApertura ? "" : m.obs);
   }
+  // v147: textos largos: lo primero arriba y el resto abajo, cortado con "…" (igual que Select)
+  if(raw.includes(" · ")){ const [a, ...rest] = raw.split(" · "); return main(a) + sub(rest.join(" · ")); }
   return raw ? main(raw) : `<span class="mv-sub">—</span>`;
 }
 function renderMovRows(){

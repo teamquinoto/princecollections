@@ -14,6 +14,7 @@ function viewDocs(tipo){
       <p>${isC?t("doc.sub.purch"):t("doc.sub.sales")}</p>
     </div>
     <div class="actions">
+      ${(!isC && typeof cobrosExcelBtnHTML==="function") ? cobrosExcelBtnHTML() : ""}
       <button class="btn primary" data-open="${tipo}">${isC?ICO.buy+t("dash.newpurchase"):ICO.sale+t("doc.btn.newsale")}</button>
     </div>
   </div>
@@ -28,6 +29,7 @@ function viewDocs(tipo){
         ${vendedores().map(v=>`<option value="${esc(v.id)}" ${f.vend===v.id?"selected":""}>${esc(v.nombre)}</option>`).join("")}
         <option value="__none" ${f.vend==="__none"?"selected":""}>${t("doc.o.house")}</option>
       </select>` : ""}
+      ${!isC ? cobroFiltroHTML(f) : ""}
       <label class="u-fs-xs u-muted">${t("mov.from")} <input class="inp" id="ddesde" type="date" value="${esc(f.desde)}" style="width:128px"></label>
       <label class="u-fs-xs u-muted">${t("mov.to")} <input class="inp" id="dhasta" type="date" value="${esc(f.hasta)}" style="width:128px"></label>
       <button class="btn ghost sm" id="dclear">${t("dash.f.clear")}</button>
@@ -66,6 +68,7 @@ function docsVisibles(tipo){
   return db.ventas.slice();
 }
 /* Encabezado ordenable: muestra ↑ (asc), ↓ (desc) o ↕ (inactivo, "sin flecha") */
+function ventasVisibles(){ return docsVisibles("venta"); }   // v146 · para el filtro de cobro pendiente
 function sortTh(f, key, label, align){
   const active = f.sortKey===key && f.sortDir;
   let cls = "sortable";
@@ -128,6 +131,7 @@ function filtrarDocs(tipo){
       if(f.vend==="__none"){ if(d.vendedorId) return false; }
       else if((d.vendedorId||"")!==f.vend) return false;
     }
+    if(tipo==="venta" && !cobroFiltroOk(d, f)) return false;   // v133 · medio / cuenta de cobro
     return true;
   });
   // Orden: si no hay columna activa, default = fecha ↓ (más reciente primero)
@@ -173,18 +177,19 @@ function renderDocRows(tipo){
       <td>${esc(fmtDate(d.fecha))}</td>
       ${showSocCol?`<td>${esc(storeName(d.store))}</td>`:""}
       ${showVendCol?`<td>${esc(saleVendedorNombre(d))}</td>`:""}
-      <td>${esc(nombreVis(d.contraparte)||"—")}</td>
+      <td>${esc(nombreVis(d.contraparte)||"—")}${isC?"":cobroPendienteHTML(d)}</td>
       <td class="c num">${qty(items)}</td>
       <td class="r num">${money(d.total)}</td>
       ${statusCell}
       ${commCell}
       <td class="u-nowrap r">${(()=>{
         // Fila: tocar la fila = Ver. Acá sólo queda el menú "⋯" con el resto (patrón de stockselect).
-        const bStatus = (isC&&puedeComprar()) ? menuBtn(`data-invstatus="${d.id}"`, received?ICO.plane:ICO.receive, received?t('doc.act.marktransit'):t('doc.act.markreceived')) : "";
+        // v146: el estado de la compra queda a la vista (la acción más usada), igual que en la otra app
+        const bStatus = (isC&&puedeComprar()) ? `<button class="btn ghost sm" data-invstatus="${d.id}">${received?ICO.plane+t('doc.act.marktransit'):ICO.receive+t('doc.act.markreceived')}</button>` : "";
         const bCopy   = tipo==="venta" ? menuBtn(`data-copydoc="${tipo}:${d.id}"`, ICO.copy, t("doc.act.copy")) : "";
         const bEdit   = menuBtn(`data-editdoc="${tipo}:${d.id}"`, ICO.edit, t("common.edit"));
         const bDel    = menuBtn(`data-deldoc="${tipo}:${d.id}"`, ICO.trash, t("common.delete"), true);
-        return rowOverflow("", bStatus+bCopy+bEdit+bDel);
+        return rowOverflow(bStatus, bCopy+bEdit+bDel);
       })()}</td>
     </tr>`;
   }).join("") || `<tr><td class="u-center u-muted u-p5" colspan="${cols}">${t("doc.nomatch")}</td></tr>`;
@@ -237,12 +242,13 @@ function wireDocFiltros(){
   document.getElementById("dq").oninput=e=>upd("q",e.target);
   document.getElementById("ddesde").onchange=e=>upd("desde",e.target);
   document.getElementById("dhasta").onchange=e=>upd("hasta",e.target);
-  const dvend=document.getElementById("dvend"); if(dvend) dvend.onchange=e=>{ f.vend=e.target.value; render(); };   // render completo: actualiza filas + KPIs (comisión)
+  const dvend=document.getElementById("dvend"); if(dvend) dvend.onchange=e=>{ f.vend=e.target.value; render(); };
+  const dcob=document.getElementById("dcob"); if(dcob) dcob.onchange=e=>{ f.cob=e.target.value; render(); };   // render completo: actualiza filas + KPIs (comisión)
   document.getElementById("dclear").onclick=()=>{
     docFiltros[tipo]= tipo==="venta"
-      ? {q:"",desde:"",hasta:"",vend:"",sortKey:"",sortDir:""}
+      ? {q:"",desde:"",hasta:"",vend:"",cob:"",sortKey:"",sortDir:""}
       : {q:"",desde:"",hasta:"",sortKey:"",sortDir:""};
-    ["dq","ddesde","dhasta","dvend"].forEach(id=>{const el=document.getElementById(id); if(el)el.value="";});
+    ["dq","ddesde","dhasta","dvend","dcob"].forEach(id=>{const el=document.getElementById(id); if(el)el.value="";});
     render();   // re-render para resetear también las flechas de los headers
   };
   // Orden por columna: clic cicla desc -> asc -> sin orden (default fecha ↓)

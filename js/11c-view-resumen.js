@@ -278,7 +278,7 @@ function viewResumen(){
     ${risks.length ? risks.map(k=>`<div class="rk rk-${k.sev}">
         <span class="rk-sev">${sevTxt[k.sev]}</span>
         <div class="rk-body"><b>${esc(k.title)}</b><span>${esc(k.desc)}</span></div>
-        <button type="button" class="btn ghost sm" data-rgo="${esc(k.go)}">${esc(k.goLabel)}</button>
+        <button type="button" class="btn ghost sm btn-go" data-rgo="${esc(k.go)}">${esc(k.goLabel)}${ICO.go}</button>
       </div>`).join("") : `<div class="cempty">${t("rk.none")}</div>`}
   </div>`;
 
@@ -311,7 +311,7 @@ function viewResumen(){
         <div class="dc-n ${x.neg?"neg":""}">${qty(x.n)}</div>
         <b>${esc(x.title)}</b>
         <span>${esc(x.desc)}</span>
-        <button type="button" class="btn ${x.primary?"primary":""} sm" data-rgo="${esc(x.go)}">${esc(x.label)}</button>
+        <button type="button" class="btn ${x.primary?"primary":""} sm btn-go" data-rgo="${esc(x.go)}">${esc(x.label)}${ICO.go}</button>
       </div>`).join("")}</div>` : `<div class="cempty">${t("dc.none")}</div>`}
   </div>`;
 

@@ -27,6 +27,7 @@ function openProd(id){
       <div class="field"><label>${t("prod.l.reorder")}</label><input class="inp num" id="p_rep" value="${p.puntoRepedido}"></div>`}
       ${!p ? `<div class="field"><label>${t("prod.l.reorder")}</label><input class="inp num" id="p_rep" value="0"></div>` : ""}
     </div>
+    ${skuAsocSeccionHTML(p)}
 
     <div class="u-cols2 u-p0 u-mt2 grid-form">
       <div class="field"><label>${t("prod.l.language")}</label><select class="inp" id="p_idioma">
@@ -125,6 +126,7 @@ function openProd(id){
   }
   $("p_img").oninput = pintarImg; pintarImg();
   syncDesglose(); pintarMargen();
+  skuAsocWire(id);
   $("p_sku").focus();
 }
 function saveProd(id){
@@ -134,6 +136,8 @@ function saveProd(id){
   const sku=g("p_sku").trim();
   const dup=skuEnUso(sku, id);
   if(dup){ toast(t("prod.tt.dupsku",{sku:sku,name:dup.nombre}),"warn"); return; }
+  const asoc = skuAsocLeer(id, sku);              // v132 · códigos de otros proveedores
+  if(!asoc.ok) return;
   const desglosa = document.getElementById("p_desglosa").checked;
   const neto = parseNum(g("p_neto"));
   const hand = desglosa ? parseNum(g("p_hand")) : 0;
@@ -145,7 +149,7 @@ function saveProd(id){
   const imgRaw = document.getElementById("p_img") ? g("p_img").trim() : "";
   if(imgRaw && !/^https?:\/\/\S+$/i.test(imgRaw)){ toast(t("prod.tt.badimg"),"warn"); return; }
   const campos = {
-    sku, unidad:g("p_uni").trim()||"u", nombre:nom,
+    sku, skusAsoc:asoc.lista, unidad:g("p_uni").trim()||"u", nombre:nom,
     costoNeto:neto, costoHandling:hand, costoFlete:flete, ultimoCosto:total,
     precioVenta:parseNum(g("p_pv")), puntoRepedido:parseNum(g("p_rep")),
     categoria:g("p_cat"), nivel:g("p_niv"), estado, idioma, imagen:imgRaw,

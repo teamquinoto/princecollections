@@ -831,7 +831,7 @@
   if(typeof I18N==="undefined") return;
   Object.assign(I18N.en, {
     "xp.tt.building":"Preparing the Excel…", "xp.tt.fallback":"Couldn't load the styled Excel; exported the plain version.",
-    "xp.company":"Stock Manager", "xp.generated":"Generated {d}",
+    "xp.company":"Prince Collections", "xp.generated":"Generated {d}",
     "xp.sh.summary":"Summary", "xp.sh.monthly":"Monthly P&L", "xp.sh.monthly.t":"Income statement month by month",
     "xp.sh.soc.t":"Income statement by company", "xp.sh.game":"By game", "xp.sh.game.t":"Sales and margin by game",
     "xp.sh.seller.t":"Results by seller", "xp.sh.products":"Products",
@@ -853,7 +853,7 @@
   });
   Object.assign(I18N.es, {
     "xp.tt.building":"Armando el Excel…", "xp.tt.fallback":"No se pudo cargar el Excel con diseño; se exportó la versión plana.",
-    "xp.company":"Stock Manager", "xp.generated":"Generado el {d}",
+    "xp.company":"Prince Collections", "xp.generated":"Generado el {d}",
     "xp.sh.summary":"Resumen", "xp.sh.monthly":"P&L mensual", "xp.sh.monthly.t":"Estado de resultados mes a mes",
     "xp.sh.soc.t":"Estado de resultados por sociedad", "xp.sh.game":"Por juego", "xp.sh.game.t":"Ventas y margen por juego",
     "xp.sh.seller.t":"Resultado por vendedor", "xp.sh.products":"Productos",

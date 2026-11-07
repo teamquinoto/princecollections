@@ -8,11 +8,12 @@ let draft = null;  // { tipo, contraparte, fecha, numero, medioPago, lineas:[{ke
    si renombrás una opción las ventas viejas siguen mostrando el texto original. */
 const PAYMENT_METHODS = ["Cash", "Card", "Zelle", "Wire / ACH", "Check", "PayPal", "Venmo", "Other"];
 /* El valor guardado queda en inglés (estable); sólo se traduce la etiqueta. Valores libres/viejos se muestran tal cual. */
-function payLabel(m){ return PAYMENT_METHODS.includes(m) ? t("pay.m."+m) : (m||""); }
+function payLabel(m){ return PAYMENT_METHODS.includes(m) ? t("pay.m."+m) : ((m && I18N.en["cob.m."+m]!=null) ? t("cob.m."+m) : (m||"")); }   // v103/v147: medios viejos (Transfer…) también traducidos
 
 function openDoc(tipo, pre){
   // Punto 3: un vendedor no puede cargar compras.
   if(tipo==="compra" && !puedeComprar()){ toast(t("md.err.admincompra"),"warn"); return; }
+  if(tipo==="venta" && isEditor()){ toast(t("ed.err.nosale"),"warn"); return; }   // v134
   draft = pre || {
     tipo, contraparte:"", fecha:isoLocal(new Date()),
     numero: tipo==="venta" ? nextFacturaVenta() : "",
@@ -91,13 +92,14 @@ function renderDocModal(){
       ${isC?`<div class="u-span2 field"><label>${t("md.lbl.supplier")}</label><input class="inp" id="d_cp" value="${esc(draft.contraparte)}"></div>`:clienteRow}
       <div class="field"><label>${t("common.date")}</label><input class="inp" type="date" id="d_fe" value="${esc(draft.fecha)}"></div>
       <div class="field"><label>${isC?t("md.lbl.docno"):t("md.lbl.invno")+' <span class="u-fw400 hint">'+t("md.invno.hint")+'</span>'}</label><input class="inp" id="d_nu" value="${esc(draft.numero)}"></div>
-      ${isC?"":`<div class="field"><label>${t("md.pay.method")} <span class="u-fw400 hint">${t("md.req")}</span></label>
+      ${isC?"":`<div class="field"><label>${t("md.pay.method")} <span class="u-fw400 hint">${t("cob.later")}</span></label>
         <select class="inp" id="d_pago">
           <option value="" ${!draft.medioPago?"selected":""}>${t("md.pay.select")}</option>
           ${PAYMENT_METHODS.map(m=>`<option value="${esc(m)}" ${m===draft.medioPago?"selected":""}>${esc(payLabel(m))}</option>`).join("")}
           ${(draft.medioPago && !PAYMENT_METHODS.includes(draft.medioPago))?`<option value="${esc(draft.medioPago)}" selected>${esc(draft.medioPago)}</option>`:""}
         </select></div>
-      <div class="field"><label>${t("md.pay.ref")} <span class="u-fw400 hint">${t("conj.l.optional")}</span></label><input class="inp" id="d_ref" value="${esc(draft.refPago||"")}" placeholder="${t("md.pay.ref.ph")}" autocomplete="off" spellcheck="false"></div>`}
+      <div class="field"><label>${t("md.pay.ref")} <span class="u-fw400 hint">${t("conj.l.optional")}</span></label><input class="inp" id="d_ref" value="${esc(draft.refPago||"")}" placeholder="${t("md.pay.ref.ph")}" autocomplete="off" spellcheck="false"></div>
+      ${cobroCamposVentaHTML(draft,false)}`}
     </div>
     <div id="lineHost"></div>
     <button class="u-mt3 btn sm" id="addLine">${ICO.plus}${t("md.btn.addline")}</button>
@@ -156,6 +158,7 @@ function renderDocModal(){
     const dfix=document.getElementById("d_clifix"); if(dfix) dfix.onclick=(e)=>{ e.preventDefault(); openClienteForm(draft.clienteId); };
     const dpago=document.getElementById("d_pago"); if(dpago) dpago.onchange=e=>{ draft.medioPago=e.target.value; };
     const dref=document.getElementById("d_ref"); if(dref) dref.oninput=e=>{ draft.refPago=e.target.value; };
+    cobroWireVenta(draft);   // v133 · cuenta de destino
     const et=document.getElementById("d_envtipo"), em=document.getElementById("d_envmonto");
     et.onchange=()=>{ draft.envio.tipo=et.value; em.disabled=(et.value==="free"); if(et.value==="free"){ draft.envio.monto=0; em.value=0; } refreshTotal(); };
     em.oninput=()=>{ draft.envio.monto=parseNum(em.value); refreshTotal(); };
@@ -426,7 +429,7 @@ function openAjustePicker(anchor){
   const paint=(q)=>{
     q=(q||"").trim().toLowerCase();
     const palabras=q.split(/\s+/).filter(Boolean);
-    visibles = palabras.length ? base.filter(x=>{ const h=((x.nombre||"")+" "+(x.sku||"")).toLowerCase(); return palabras.every(w=>h.includes(w)); }) : base;
+    visibles = palabras.length ? base.filter(x=>{ const h=((x.nombre||"")+" "+skuHay(x)).toLowerCase(); return palabras.every(w=>h.includes(w)); }) : base;
     listEl.innerHTML = visibles.length ? visibles.slice(0,300).map(x=>{
       const sku = x.sku ? `<span class="sku">${esc(x.sku)}</span>` : "";
       const act = x.id===adjDraft.productoId ? " active" : "";
@@ -572,7 +575,7 @@ function pickerItemsHTML(i, q){
                   : db.productos.filter(p=> stockVendibleTotal(p)>0 || p.id===cur);
   // orden alfabético SIEMPRE (task 2), por nombre
   lista.sort((a,b)=> String(a.nombre||"").localeCompare(String(b.nombre||""),"es",{numeric:true}));
-  if(q) lista = lista.filter(p=> ((p.nombre||"")+" "+(p.sku||"")).toLowerCase().includes(q));
+  if(q) lista = lista.filter(p=> ((p.nombre||"")+" "+skuHay(p)).toLowerCase().includes(q));
   let html = lista.map(p=>{
     const sku = p.sku ? `<span class="sku">${esc(p.sku)}</span>` : "";
     let disp = "";

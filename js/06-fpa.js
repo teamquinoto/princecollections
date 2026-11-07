@@ -470,7 +470,7 @@ function planMesCardHTML(opts){
   const mesLbl = finMonthLabel(P.mk);
   const head = (sub)=> `<div class="phead"><h3>${t("pm.title",{m:esc(mesLbl)})}</h3>
       <span class="hint">${sub}</span>
-      ${opts.compact?`<button type="button" class="btn ghost sm" data-goto-plan>${t("pm.detail")}</button>`:""}</div>`;
+      ${opts.compact?`<button type="button" class="btn ghost sm btn-go" data-goto-plan>${t("pm.detail")}${ICO.go}</button>`:""}</div>`;
 
   if(P.estado==="noplan" || P.estado==="nomonth"){
     const msg = P.estado==="noplan" ? t("pm.empty.noplan") : t("pm.empty.nomonth",{m:esc(mesLbl)});

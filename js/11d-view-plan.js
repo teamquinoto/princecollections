@@ -33,8 +33,8 @@ function planEmptyHTML(){
       <li>${t("plan.empty.s1")}</li><li>${t("plan.empty.s2")}</li><li>${t("plan.empty.s3")}</li>
     </ol>
     <div class="u-flex u-gap3 u-wrap u-mt4">
-      <button class="btn" data-fpa-tpl>${t("plan.btn.template")}</button>
-      <button class="btn primary" data-fpa-import>${t("plan.btn.import")}</button>
+      <button class="btn" data-fpa-tpl>${ICO.download}${t("plan.btn.template")}</button>
+      <button class="btn primary" data-fpa-import>${ICO.upload}${t("plan.btn.import")}</button>
     </div>
   </div>`;
 }
@@ -43,8 +43,8 @@ function viewPlan(){
   const head = `
   <div class="head"><div class="title"><h2>${t("plan.title")}</h2><p>${t("plan.sub")}</p></div>
     <div class="u-gap2 actions">
-      <button class="btn" data-fpa-tpl>${t("plan.btn.template")}</button>
-      <button class="btn primary" data-fpa-import>${t("plan.btn.import")}</button>
+      <button class="btn" data-fpa-tpl>${ICO.download}${t("plan.btn.template")}</button>
+      <button class="btn primary" data-fpa-import>${ICO.upload}${t("plan.btn.import")}</button>
     </div>
   </div>`;
   const ver = fpaVigente();
@@ -66,7 +66,7 @@ function viewPlan(){
       <div class="u-flex u-gap2 u-items-center">
         <label class="u-m0 hint" for="plan_ver">${t("plan.ver.version")}</label>
         <select class="inp" id="plan_ver" style="height:34px;min-width:180px">${vs.map(v=>`<option value="${esc(v.id)}" ${v.id===ver.id?"selected":""}>${esc(v.nombre)}${v.id===ver.id?" · "+t("plan.ver.current"):""}</option>`).slice().reverse().join("")}</select>
-        <button class="btn ghost sm danger-ghost" data-fpa-del="${esc(ver.id)}" title="${t("plan.ver.delete")}" aria-label="${t("plan.ver.delete")}">${t("plan.ver.delete")}</button>
+        <button class="btn ghost sm danger-ghost" data-fpa-del="${esc(ver.id)}" title="${t("plan.ver.delete")}" aria-label="${t("plan.ver.delete")}">${ICO.trash}${t("plan.ver.delete")}</button>
       </div>
     </div>
     <p class="csub" style="margin:10px 0 0">${t("plan.ver.meta",{file:esc(ver.archivo||"—"), date:fmtDate(ver.importado), rows:(ver.filas||[]).length, months:new Set((ver.filas||[]).map(x=>x.mes)).size, lines:new Set((ver.filas||[]).map(x=>x.linea)).size})}</p>
@@ -272,7 +272,7 @@ function simuladorHTML(){
   return `<div class="u-mb5 panel chart sim">
     <div class="u-flex u-between u-items-start u-gap3 u-wrap">
       <div><p class="ctitle">${t("sim.title")}</p><p class="u-m0 csub">${t("sim.sub")}</p></div>
-      <button type="button" class="btn ghost sm" data-sim-reset>${t("sim.reset")}</button>
+      <button type="button" class="btn ghost sm" data-sim-reset>${ICO.undo}${t("sim.reset")}</button>
     </div>
     <div class="sim-grid">
       <div class="sim-in">

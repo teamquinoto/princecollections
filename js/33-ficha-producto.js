@@ -32,8 +32,9 @@ function openFicha(id){
     </tr>`;
   }).reverse().join("");
 
-  const totComp = movs.filter(m=>m.refTipo==="compra").reduce((a,m)=>a+m.cantidad,0);
-  const totVend = movs.filter(m=>m.refTipo==="venta").reduce((a,m)=>a+m.cantidad,0);
+  const _cant = m=> Math.abs(m.cantidad!=null ? +m.cantidad : (+m.delta||0));   // v146: más robusto (igual que la otra app)
+  const totComp = movs.filter(m=>m.refTipo==="compra").reduce((a,m)=>a+_cant(m),0);
+  const totVend = movs.filter(m=>m.refTipo==="venta").reduce((a,m)=>a+_cant(m),0);
   const margen = (p.precioVenta||0)-(p.ultimoCosto||0);
   const margenPct = p.precioVenta>0 ? (margen/p.precioVenta*100) : 0;
   const totalStock = stockTotalP(p);
@@ -43,9 +44,9 @@ function openFicha(id){
   const badge = esInversion(p)?' <span class="pill vault">'+ICO.vault+t("inv.pill")+'</span>':(esBloqueado(p)?' <span class="pill blocked">'+t("fi.badge.blocked")+'</span>':'');
 
   const body = `
-    <div class="kpis" style="grid-template-columns:repeat(4,1fr);margin-bottom:18px">
+    <div class="kpis fi-kpis" style="grid-template-columns:repeat(4,1fr);margin-bottom:18px">
       <div class="kpi"><div class="lbl">${t("fi.kpi.totalstock")}</div><div class="val" style="color:${totalStock<0?'var(--alert)':'inherit'}">${qty(totalStock)}</div><div class="sub">${perStore}</div></div>
-      <div class="kpi"><div class="lbl">${t("pr.th.lastcost")}</div><div class="val">${money(p.ultimoCosto)}</div><div class="sub">${t("fi.kpi.fifovalued",{m:money(valorFifoTotal(p))})}</div></div>
+      <div class="kpi"><div class="lbl">${t("fi.kpi.avgcost")}</div><div class="val">${money(stockTotalP(p)>0?round2(valorFifoTotal(p)/stockTotalP(p)):0)}</div><div class="sub">${t("fi.kpi.fifovalued",{m:moneyRound(valorFifoTotal(p))})}</div></div>
       <div class="kpi"><div class="lbl">${t("fi.kpi.listprice")}</div><div class="val">${moneyOpt(p.precioVenta)}</div><div class="sub">${p.precioVenta>0?t("fi.kpi.margin",{p:nf0.format(margenPct)}):t("fi.kpi.noprice")}${badge}</div></div>
       <div class="kpi"><div class="lbl">${t("fi.kpi.boughtsold")}</div><div class="val" style="font-size:var(--fs-2xl)"><span class="delta up">${qty(totComp)}</span> / <span class="delta down">${qty(totVend)}</span></div><div class="sub">${t("fi.kpi.lifetime")}</div></div>
     </div>
@@ -69,7 +70,7 @@ function openFicha(id){
        Mandar a inversiones se hace desde Panel/Productos (donde está el stock vendible). */
     (puedeInvertir() && totalStock>0 && view!=="inv") ? {label:t("fi.btn.toinv"),icon:ICO.vault,cls:"btn",act:()=>{ closeModal(); openSendToInvestment(id); }} : null,
     (puedeInvertir() && held>0) ? {label:t("fi.btn.retvault"),icon:ICO.vault,cls:"btn",act:()=>{ closeModal(); openReturnFromInvestment(id); }} : null,
-    puedeEditarProductos() ? {label:t("fi.btn.editprod"),cls:"btn",act:()=>{ closeModal(); openProd(id); }} : null,
+    puedeEditarProductos() ? {label:t("fi.btn.editprod"),icon:ICO.edit,cls:"btn",act:()=>{ closeModal(); openProd(id); }} : null,
     {label:t("common.close"),cls:"btn primary",act:closeModal}
   ].filter(Boolean), true);
 

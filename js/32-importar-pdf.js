@@ -250,12 +250,65 @@ function reconstructLines(items){
     .map(([,arr])=> arr.sort((a,b)=>a.x-b.x).map(o=>o.s).join(" ").replace(/\s+/g," ").trim());
 }
 
+/* ---------- Proveedor Devir Americas (lectura automática, sin IA) ----------
+   Renglón: [Bin] Qty Descripción  FechaLanzamiento  MPN  UPC  Idioma  Origen  HTS  Kgs  Precio  Importe
+     ej: "01N1 3 Pokémon TCG: Poke Ball Tin 2025 Master Case 6ct. - December 5, 2025 10-10113-142
+          10196214130453 English USA 9504.40.0000 1.77 54.87 164.61"
+   - El nombre puede seguir en el renglón de abajo ("Master Case 6ct. - ENGLISH"): se suma.
+   - La fecha de lanzamiento a veces viene cortada ("September 16, 2..."): igual se reconoce.
+   - SKU = MPN (código del fabricante). Costo = Price. El UPC queda en el detalle.
+   - "Credit or debit card convenience fee" no es mercadería: va como cargo (se prorratea en el costo).
+   - Fecha de la factura en formato americano (10/1/2026 = 1 de octubre). */
+function esFacturaDevir(blob){
+  return /Devir\s+Americas/i.test(blob) && /\bBin\s+Qty\s+Description\b/i.test(blob);
+}
+function _devirFecha(s){
+  const m = String(s||"").match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/); if(!m) return "";
+  return m[3]+"-"+String(m[1]).padStart(2,"0")+"-"+String(m[2]).padStart(2,"0");
+}
+function parseDevir(lines, blob){
+  if(!esFacturaDevir(blob)) return null;
+  const MES = "(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\\.?";
+  const reItem = new RegExp("^(?:([A-Z0-9][A-Z0-9\\-]{0,9})\\s+)?(\\d+)\\s+(.+?)\\s+"+MES+"\\s+\\d{1,2},\\s*\\S+\\s+(\\S+)\\s+(\\d{8,14})\\s+([A-Za-z]+)\\s+([A-Za-z]{2,})\\s+(\\d{4}\\.\\d{2}\\.\\d{2,4})\\s+([\\d.,]+)\\s+([\\d.,]+)\\s+([\\d.,]+)\\s*$");
+  /* Por si falta la fecha de lanzamiento (preventas sin fecha): mismo renglón sin ese dato */
+  const reItemSinFecha = new RegExp("^(?:([A-Z0-9][A-Z0-9\\-]{0,9})\\s+)?(\\d+)\\s+(.+?)\\s+(\\S+)\\s+(\\d{8,14})\\s+([A-Za-z]+)\\s+([A-Za-z]{2,})\\s+(\\d{4}\\.\\d{2}\\.\\d{2,4})\\s+([\\d.,]+)\\s+([\\d.,]+)\\s+([\\d.,]+)\\s*$");
+  const reCargo = /^(?:[A-Z0-9][A-Z0-9\-]{0,9}\s+)?(\d+)\s+(.*?(?:fee|cargo|recargo|shipping|freight|handling)[^\d]*?.*?)\s+([\d.,]+)\s+([\d.,]+)\s*$/i;
+  const corte = /^(INCOTERM|FCA|GND|All products|Total\b|Bin\s+Qty|Total de cajas|www\.|warehouse|permanent|products are|within the)/i;
+  const items=[]; items.cargos=0; let ultimo=null, extra=0;
+  for(const raw of lines){
+    const l = raw.replace(/\s+/g," ").trim(); if(!l) continue;
+    const m = l.match(reItem) || l.match(reItemSinFecha);
+    if(m){
+      const cantidad=parseNum(m[2]), costo=parseNum(m[10]), ext=parseNum(m[11]);
+      ultimo=null; extra=0;
+      if(!(cantidad>0)) continue;
+      ultimo={ sku:m[4], desc:m[3].trim(), cantidad, costo, msrp:0, ext, upc:m[5], idioma:m[6],
+               raw:l };
+      items.push(ultimo); continue;
+    }
+    const c = l.match(reCargo);
+    if(c && !/\d{8,}/.test(l)){ items.cargos += parseNum(c[4]); ultimo=null; continue; }
+    if(ultimo && extra<3 && /[A-Za-z]/.test(l) && !corte.test(l)){
+      ultimo.desc = (ultimo.desc+" "+l).replace(/\s+-\s*$/,"").replace(/\s+/g," ").trim(); extra++; continue;
+    }
+    ultimo=null;
+  }
+  if(!items.length) return null;
+  items.forEach(it=>{ it.desc = it.desc.replace(/\s*-\s*$/,"").trim(); });
+  const num = blob.match(/Invoice\s*#\s*([A-Z]{2,5}-?\d+)/i);
+  const ord = blob.match(/Order\s*#\s*([A-Z]{2,5}-?\d+)/i);
+  const meta = { numero: num?num[1]:"", fecha: _devirFecha(blob), proveedor:"Devir Americas, LLC", flete:0,
+                 handling: Math.round(items.cargos*100)/100, orden: ord?ord[1]:"" };
+  return { meta, items, mode:"estructurado", formato:"devir" };
+}
+
 /* ---------- Parser de factura ----------
    1) Intento estructurado: renglones "SKU: descripción ... QTY UOM MSRP NET EXT"
       (formato tipo Coqui Hobby). Costo = NET PRICE, precio venta sugerido = MSRP.
    2) Si no encuentra nada, cae a la heurística genérica línea por línea.        */
 function parseInvoice(lines){
   const blob = lines.join("\n");
+  const devir = parseDevir(lines, blob); if(devir) return devir;   // proveedor Devir: formato propio
   const meta = extractMeta(lines, blob);
   let items = parseStructured(blob);
   let mode = "estructurado";
@@ -383,19 +436,20 @@ function showImportEditor(fname, parsed){
   // mapear cada ítem a un producto existente por SKU (o por nombre)
   items.forEach(c=>{
     const bySku = c.sku ? findProdBySku(c.sku) : null;
-    const byName = bySku ? null : db.productos.find(p=> p.nombre && c.desc.toLowerCase().includes(p.nombre.toLowerCase()));
+    const byName = bySku ? null : db.productos.find(p=> p.nombre && c.desc.toLowerCase().includes(p.nombre.toLowerCase()) && (typeof _saMismoIdioma!=="function" || _saMismoIdioma(c.desc,p)));
     const match = bySku || byName;
     c.productoId = match ? match.id : "";
     c.crear = !match;
     c.nombre = match ? match.nombre : c.desc;
     c.sel = true;
   });
+  skuAsocPrepararItems(items);          // v132 · códigos asociados / desconocidos
   window._cands = items;
 
   const rows=items.map((c,i)=>`<tr>
     <td class="c"><input type="checkbox" data-sel="${i}" ${c.sel?"checked":""}></td>
     <td class="c">${c.sku?`<span class="sku">${esc(c.sku)}</span>`:'<span class="u-muted">—</span>'}</td>
-    <td class="imp-desc">${esc(c.desc)}</td>
+    <td class="imp-desc">${esc(c.desc)}${skuAsocCeldaExtra(c,i)}</td>
     <td style="width:74px"><input class="inp num" data-imp="cantidad" data-i="${i}" value="${c.cantidad}"></td>
     <td style="width:104px"><input class="inp num" data-imp="costo" data-i="${i}" value="${c.costo}"></td>
     <td style="width:104px"><input class="inp num" data-imp="msrp" data-i="${i}" value="${c.msrp||0}"></td>
@@ -422,6 +476,7 @@ function showImportEditor(fname, parsed){
   const bIA=document.getElementById("impLeerIA"); if(bIA && parsed.leerConIA) bIA.onclick=parsed.leerConIA;
 
   out.querySelectorAll("[data-sel]").forEach(cb=> cb.onchange=()=> items[+cb.dataset.sel].sel=cb.checked);
+  skuAsocWireImport(out, items);
   out.querySelectorAll("[data-imp]").forEach(inp=>{
     const i=+inp.dataset.i, k=inp.dataset.imp;
     inp.oninput=()=>{
@@ -438,12 +493,14 @@ function showImportEditor(fname, parsed){
   impContinuar(()=>{
     const chosen=items.filter(c=>c.sel && c.cantidad>0);
     if(!chosen.length){ toast(t("imp.tt.tickone"),"warn"); return; }
+    skuAsocAplicar(chosen, meta.proveedor);
     const lineas=chosen.map(c=>({
       key:uid(),
       productoId: c.crear?"":c.productoId,
       crear: c.crear,
       sku: c.crear?(c.sku||""):"",
       nombre: c.crear?c.nombre:"",
+      idioma: c.crear ? (c.idioma!==undefined ? c.idioma : undefined) : undefined,   // nov 2026: idioma real del producto nuevo
       precioVentaSugerido: c.msrp||0,
       cantidad:c.cantidad, precio:c.costo
     }));

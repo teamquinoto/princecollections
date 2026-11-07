@@ -232,7 +232,7 @@ function openCmdK(){
     const palabras = String(q||"").trim().toLowerCase().split(/\s+/).filter(Boolean);
     results = [];
     if(palabras.length){
-      (db.productos||[]).filter(p=> coincide((p.nombre||"")+" "+(p.sku||""), palabras)).slice(0,7)
+      (db.productos||[]).filter(p=> coincide((p.nombre||"")+" "+skuHay(p), palabras)).slice(0,7)
         .forEach(p=> results.push({ k:"p", kind:t("cmdk.kind.product"), label:p.nombre||"—", sub:p.sku||"",
           action:()=>{ close(); if(typeof openFicha==="function") openFicha(p.id); } }));
       (db.clientes||[]).filter(c=> coincide((c.nombre||"")+" "+(c.empresa||"")+" "+(c.email||""), palabras)).slice(0,5)

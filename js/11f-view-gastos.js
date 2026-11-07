@@ -216,7 +216,7 @@ function viewGastos(){
     <b>${esc(t("gx.month",{m:gxMonthName(mk)}))}</b>
     <button class="btn ghost sm" data-gx-mes="${gxAddM(mk,1)}" aria-label="${t("gx.next")}">›</button>
     ${mk!==cur?`<button class="btn ghost sm" data-gx-mes="${cur}">${t("gx.today")}</button>`:""}
-    <button class="btn ghost sm gx-catsbtn" data-gx-cats>${t("gx.btn.cats")}</button>
+    <button class="btn ghost sm gx-catsbtn" data-gx-cats>${ICO.list}${t("gx.btn.cats")}</button>
   </div>`;
 
   /* --- KPIs del mes --- */
@@ -477,7 +477,7 @@ function gxCatsModal(){
       <td><input class="inp" data-gxcat-name value="${esc(gxCatLabel(c.id))}"></td>
       <td><select class="inp" data-gxcat-grp>${GX_GRUPOS.map(k=>`<option value="${k}" ${c.grupo===k?"selected":""}>${t("gx.grp."+k)}</option>`).join("")}</select></td>
       <td><input class="inp num" data-gxcat-bud inputmode="decimal" placeholder="—" value="${c.presupuesto?esc(String(c.presupuesto)):""}" style="width:110px"></td>
-      <td>${(used.has(c.id) || c.id==="otros") ? `<span class="pm-sub">${t(c.id==="otros"?"gx.cats.fixed":"gx.cats.used")}</span>` : `<button type="button" class="btn ghost sm danger-ghost" data-gxcat-del>${t("gx.btn.delete")}</button>`}</td>
+      <td>${(used.has(c.id) || c.id==="otros") ? `<span class="pm-sub">${t(c.id==="otros"?"gx.cats.fixed":"gx.cats.used")}</span>` : `<button type="button" class="btn ghost sm danger-ghost" data-gxcat-del>${ICO.trash}${t("gx.btn.delete")}</button>`}</td>
     </tr>`).join("");
   const body = `<p class="u-m0 u-mb3 hint">${t("gx.cats.sub")}</p>
     <div class="table-scroll"><table class="fintbl"><thead><tr><th>${t("gx.th.cat")}</th><th>${t("gx.cats.group")}</th><th class="r" title="${esc(t("gx.cats.budtip"))}">${t("gx.cats.bud")}</th><th></th></tr></thead>
@@ -509,7 +509,7 @@ function gxCatsModal(){
     tr.innerHTML = `<td><input class="inp" data-gxcat-name placeholder="${esc(t("gx.cats.newph"))}"></td>
       <td><select class="inp" data-gxcat-grp>${GX_GRUPOS.map(k=>`<option value="${k}">${t("gx.grp."+k)}</option>`).join("")}</select></td>
       <td><input class="inp num" data-gxcat-bud inputmode="decimal" placeholder="—" style="width:110px"></td>
-      <td><button type="button" class="btn ghost sm danger-ghost" data-gxcat-del>${t("gx.btn.delete")}</button></td>`;
+      <td><button type="button" class="btn ghost sm danger-ghost" data-gxcat-del>${ICO.trash}${t("gx.btn.delete")}</button></td>`;
     tb.appendChild(tr); tr.querySelector("input").focus();
   };
 }

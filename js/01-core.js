@@ -67,18 +67,24 @@ const INV_STORE = "__inv";
 function storeName(id){ if(id===INV_STORE) return t("core.store.vault"); const s=STORES.find(x=>x.id===id); return s?s.name:(id||"—"); }
 function isStore(id){ return STORE_IDS.includes(id); }
 
-const ROLES = { ADMIN:"admin", SELLER:"seller" };
+const ROLES = { ADMIN:"admin", SELLER:"seller", EDITOR:"editor" };   // v134: + editor
 function currentRole(){ return (session && session.role) || ROLES.ADMIN; }  // Local mode (no session) = full access
 function isAdmin(){ return currentRole()===ROLES.ADMIN; }
 function isSeller(){ return currentRole()===ROLES.SELLER; }
+/* v134 · PERFIL EDITOR: carga compras y mantiene productos, sin ventas ni finanzas,
+   configuración o usuarios. El servidor ignora lo que no le corresponde y no le
+   permite borrar compras, productos ni clientes. */
+function isEditor(){ return currentRole()===ROLES.EDITOR; }
 /* Vistas reservadas al admin. Un vendedor NO carga compras, no manda a inversión,
    no ve análisis/comisiones globales ni la exportación de datos. Sólo vende. */
-const ADMIN_VIEWS = ["compras","inv","analisis","datos","mov","pnl","resumen","plan","usuarios"];
+const ADMIN_VIEWS = ["compras","inv","analisis","datos","mov","pnl","resumen","plan","usuarios","grupo"];
+const EDITOR_VIEWS = ["dash","compras","mov","prod","grupo"];
+function vistaPermitida(v){ if(isAdmin()) return true; if(isEditor()) return EDITOR_VIEWS.includes(v); return !ADMIN_VIEWS.includes(v); }
 /* Capacidades gateadas por rol (punto 3). El modo Local (sin sesión) = admin. */
-function puedeComprar(){ return isAdmin(); }        // cargar compras / recibir facturas
+function puedeComprar(){ return isAdmin() || isEditor(); }        // cargar compras / recibir facturas
 function puedeInvertir(){ return isAdmin(); }       // enviar / traer de la bóveda de inversión
 function puedeAjustar(){ return isAdmin(); }        // ajustes de inventario
-function puedeEditarProductos(){ return isAdmin(); }// ABM de productos
+function puedeEditarProductos(){ return isAdmin() || isEditor(); }// ABM de productos
 /* SOCIEDADES: akira/silver (y futuras) son las entidades que COMPRAN. Definen la
    procedencia de cada lote, NO un local de venta. El stock es un pool único: para
    VENDER no se elige sociedad. Todos ven el mismo pool; el desglose por sociedad
@@ -1026,7 +1032,7 @@ async function doLogin(){
     // v108: salvo que la copia local sea la vista RECORTADA de vendedor y ahora entre como admin.
     const switching = prevUser !== j.user || (!!(db && db._vista) && j.role==="admin");
     try{ localStorage.setItem(LASTUSERKEY, j.user); }catch(e){}
-    session={ user:j.user, space:j.space||"main", role:j.role||"admin", vendedorId:j.vendedorId||"", name:j.name||j.user }; 
+    session={ user:j.user, space:j.space||"main", role:j.role||"admin", vendedorId:j.vendedorId||"", name:j.name||j.user, editaOtros:!!j.editaOtros }; 
     if(j.token) session.token=j.token; else if(j.cookie) session.cookie=true;   // v108: en modo cookie no hay token que guardar
     saveSession();
     // El stock es UNO SOLO: todos (admin y vendedores) arrancan en la vista
@@ -1034,7 +1040,7 @@ async function doLogin(){
     activeStore = "all";
     if(view==="inv" && !isAdmin()) view="dash";
     // Si un vendedor entra a una vista admin-only (compras/inversión/análisis/datos), lo mandamos al panel.
-    if(!isAdmin() && ADMIN_VIEWS.includes(view)) view="dash";
+    if(!vistaPermitida(view)) view="dash";
     if(switching){
       db={ config:{ moneda:(db.config&&db.config.moneda)||"$" }, productos:[], compras:[], ventas:[], movimientos:[], clientes:[], solicitudes:[] };
       persistLocal(); syncMeta={ syncedRev:0, dirty:false }; saveSyncMeta();
@@ -1208,15 +1214,26 @@ function toast(msg, kind="up"){
 /* ---------- Helpers de stock ---------- */
 function prodById(id){ return db.productos.find(p=>p.id===id); }
 function clienteById(id){ return db.clientes.find(c=>c.id===id); }
-function clienteLinea(c){ return c ? (c.empresa ? `${c.nombre} · ${c.empresa}` : c.nombre) : ""; }
+/* empresa distinta del nombre (si el usuario cargó lo mismo en los dos, se muestra una sola vez) */
+function clienteEmpresaExtra(c){ const e=String((c&&c.empresa)||"").trim(); return (e && e.toLowerCase()!==String(c.nombre||"").trim().toLowerCase()) ? e : ""; }
+function clienteLinea(c){ return c ? (clienteEmpresaExtra(c) ? `${c.nombre} · ${clienteEmpresaExtra(c)}` : c.nombre) : ""; }
 function clienteDireccion(c){
   if(!c) return "";
-  return [c.direccion, [c.ciudad, c.estado, c.zip].filter(Boolean).join(", ")].filter(Boolean).join(" · ");
+  const V = (typeof nombreVis==="function") ? nombreVis : (x=> x);   // v146: mayúsculas al mostrar
+  return [V(c.direccion||""), [V(c.ciudad||""), V(c.estado||""), String(c.zip||"").toUpperCase()].filter(Boolean).join(", ")].filter(Boolean).join(" · ");
 }
+/* v132 · SKU asociados: un producto puede tener códigos de otros proveedores en
+   p.skusAsoc = [{sku, prov, fecha}]. Ver js/35-sku-asociados.js. */
+function normSku(s){ return String(s||"").trim().toLowerCase(); }
+function skusAsocDe(p){ return (p && Array.isArray(p.skusAsoc)) ? p.skusAsoc.filter(x=>x && x.sku) : []; }
+/* Texto para buscadores: SKU propio + códigos asociados. */
+function skuHay(p){ return [(p && p.sku)||"", ...skusAsocDe(p).map(x=>x.sku)].join(" "); }
 function findProdBySku(sku){
-  if(!sku) return null;
-  const s = sku.trim().toLowerCase();
-  return db.productos.find(p => (p.sku||"").trim().toLowerCase() === s) || null;
+  const s = normSku(sku);
+  if(!s) return null;
+  return db.productos.find(p => normSku(p.sku) === s)
+      || db.productos.find(p => skusAsocDe(p).some(x => normSku(x.sku) === s))
+      || null;
 }
 /* ¿Ese SKU ya lo usa OTRO producto? Devuelve el producto en conflicto o null.
    - SKU vacío nunca colisiona (muchos productos pueden no tener código).
@@ -1226,7 +1243,8 @@ function findProdBySku(sku){
 function skuEnUso(sku, exceptId){
   const s = (sku||"").trim().toLowerCase();
   if(!s) return null;
-  return db.productos.find(p => p.id!==exceptId && (p.sku||"").trim().toLowerCase()===s) || null;
+  return db.productos.find(p => p.id!==exceptId &&
+    (normSku(p.sku)===s || skusAsocDe(p).some(x => normSku(x.sku)===s))) || null;
 }
 /* FIFO valuation of the sellable stock in the stores currently in focus.
    Sums the actual cost layers, not stock×lastcost. Excludes the vault. */

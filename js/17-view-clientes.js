@@ -13,7 +13,7 @@ function openClientePicker(anchor){
     let lista = db.clientes.slice().sort((a,b)=>String(a.nombre||"").localeCompare(String(b.nombre||""),"es"));
     if(q) lista = lista.filter(c=> ((c.nombre||"")+" "+(c.empresa||"")+" "+(c.email||"")).toLowerCase().includes(q));
     let html = lista.map(c=>`<button type="button" class="ppick-item${c.id===draft.clienteId?" active":""}" data-pickcli="${c.id}">
-      <span class="pi-name">${esc(c.nombre)}${c.empresa?` · ${esc(c.empresa)}`:""}</span>${clienteIncompleto(c)?`<span class="cli-inc-dot" title="${t("cl.inc.badge")}">${ICO.warn}</span>`:""}</button>`).join("");
+      <span class="pi-name">${esc(c.nombre)}${clienteEmpresaExtra(c)?` · ${esc(clienteEmpresaExtra(c))}`:""}</span>${clienteIncompleto(c)?`<span class="cli-inc-dot" title="${t("cl.inc.badge")}">${ICO.warn}</span>`:""}</button>`).join("");
     if(!lista.length) html = `<div class="ppick-empty">${t("md.pick.nocustmatch")}</div>`;
     html += `<button type="button" class="ppick-item new" data-pickcli="__new">${ICO.plus.replace("<svg",'<svg width="16" height="16" style="flex-shrink:0"')}${t("cl.pick.addcust")}</button>`;
     listEl.innerHTML = html;
@@ -274,7 +274,7 @@ function viewClientes(){
   const valOf = c => {
     switch(key){
       case "email":   return String(c.email||"");
-      case "ciudad":  return String([c.ciudad,c.estado].filter(Boolean).join(", "));
+      case "ciudad":  return String([nombreVis(c.ciudad||""),nombreVis(c.estado||"")].filter(Boolean).join(", "));
       case "pais":    return String(paisLabel(c.pais)||"");
       case "ventas":  return ventasDeCliente(c.id).length;
       case "nombre":
@@ -287,7 +287,7 @@ function viewClientes(){
     return `<tr>
       <td><b>${esc(c.nombre||"—")}</b>${clienteIncompleto(c)?` <span class="pill cli-inc" title="${esc(validarCliente(c,c.id).errs.map(e=>t(e.key,e.vars)).join(" · "))}">${t("cl.inc.badge")}</span>`:""}${c.empresa?`<div class="u-fs-xs hint">${esc(c.empresa)}</div>`:""}</td>
       <td>${esc(c.email||"—")}${c.telefono?`<div class="u-fs-xs hint">${esc(c.telefono)}</div>`:""}</td>
-      <td>${esc([c.ciudad,c.estado].filter(Boolean).join(", ")||"—")}</td>
+      <td>${esc([nombreVis(c.ciudad||""),nombreVis(c.estado||"")].filter(Boolean).join(", ")||"—")}</td>
       <td>${esc(paisLabel(c.pais)||"—")}</td>
       <td class="r num">${nv}</td>
       <td class="r"><span class="rowacts">
@@ -528,11 +528,8 @@ function confirmDoc(){
   const hoyIso = isoLocal(new Date());
   if(!fechaIso){ toast(t("md.err.date"),"warn"); const e=document.getElementById("d_fe"); if(e) e.focus(); return; }
   if(fechaIso > hoyIso){ toast(t("md.err.datefuture"),"warn"); const e=document.getElementById("d_fe"); if(e) e.focus(); return; }
-  if(!isC && !(draft.medioPago||"").trim()){
-    toast(t("md.err.paymethod"),"warn");
-    const e=document.getElementById("d_pago"); if(e){ e.classList.add("bad"); e.focus(); e.addEventListener("change", ()=> e.classList.remove("bad"), { once:true }); }
-    return;
-  }
+  // v146: el medio de cobro ya no es obligatorio (consignación): sin medio queda "cobro pendiente"
+  if(!isC && !cobroValidar(draft)) return;            // v133 · cuenta de destino (si se eligió medio)
   if(draft.lineas.some(l=> (l.productoId||l.crear) && !((parseNum(l.cantidad)||0) > 0))){ toast(t("md.err.qty"),"warn"); return; }
   // ---- Avisos (se confirman y se sigue) ----
   if(!isC){
@@ -582,6 +579,7 @@ function confirmDoc(){
       } else {
         if(!l.nombre.trim()){ toast(t("cl.err.newprodname"),"warn"); return; }
         p = nuevoProductoBase(l.sku, l.nombre, isC?(l.precioVentaSugerido||0):l.precio);
+        if(l.idioma!==undefined && l.idioma!==null && (l.idioma==="" || LANG_CODES.includes(l.idioma))) p.idioma = l.idioma || "EN";   // nov 2026: idioma elegido al importar
         db.productos.push(p);
       }
     } else {
@@ -683,6 +681,7 @@ function confirmDoc(){
     doc.envio = { tipo:draft.envio.tipo, monto:envioMonto };
     doc.medioPago = (draft.medioPago||"").trim();   // medio de cobro (se muestra en la factura)
     doc.refPago = (draft.refPago||"").trim();       // ref. de la transferencia / Zelle (para conciliar)
+    cobroAplicarDoc(doc, draft);                    // v133 · + cuenta de destino
     doc.cargosCliente = cargosClienteArr;
     // Costos de venta (sólo admin los edita). Si un vendedor edita, se conservan los que ya tenía.
     const srcCostos = isAdmin() ? (draft.costosExtra||[]) : ((oldDoc && oldDoc.costosExtra) || []);
@@ -748,6 +747,9 @@ function confirmDoc(){
     }
   });
 
+  // nov 2026 · quién lo cargó: se conserva al editar; uno nuevo queda a nombre de quien lo carga (el servidor lo confirma)
+  if(editing && oldDoc){ if(oldDoc.cargadoPor) doc.cargadoPor = oldDoc.cargadoPor; }
+  else if(session && session.user) doc.cargadoPor = session.user;
   (isC?db.compras:db.ventas).push(doc);
   draft.editingId=null;
   save(); closeModal();
@@ -877,6 +879,7 @@ function revertDoc(doc){
   }
 }
 function deleteDoc(tipo,id){
+  if(isEditor()){ toast(t("ed.err.nodelete"),"warn"); return; }   // v134: el editor no borra
   const list = tipo==="compra"?db.compras:db.ventas;
   const d=list.find(x=>x.id===id); if(!d) return;
   if(tipo==="compra" && trabaCompraUsada(d)) return;
@@ -892,13 +895,14 @@ function deleteDoc(tipo,id){
 function editDoc(tipo,id){
   const list = tipo==="compra"?db.compras:db.ventas;
   const d=list.find(x=>x.id===id); if(!d) return;
+  if(typeof puedeEditarDocDe==="function" && !puedeEditarDocDe(d)){ avisoDocAjeno(d); return; }   // nov 2026: el editor sólo edita lo suyo
   if(tipo==="compra" && trabaCompraUsada(d)) return;
   draft = {
     tipo, editingId:id, store:d.store||STORE_IDS[0], storeOrig:d.store||STORE_IDS[0],
     vendedorId: (tipo==="venta") ? (d.vendedorId||"") : "",
     contraparte:d.contraparte||"", fecha:normISO(d.fecha), numero:d.numero||"",
     clienteId:d.clienteId||"", envio: d.envio ? {tipo:d.envio.tipo, monto:d.envio.monto||0} : {tipo:"free",monto:0},
-    handling:d.handling||0, flete:d.flete||0, medioPago: (tipo==="venta") ? (d.medioPago||"") : "", refPago: (tipo==="venta") ? (d.refPago||"") : "",
+    handling:d.handling||0, flete:d.flete||0, medioPago: (tipo==="venta") ? (d.medioPago||"") : "", refPago: (tipo==="venta") ? (d.refPago||"") : "", cuentaCobro: (tipo==="venta") ? (d.cuentaCobro||"") : "",
     costosExtra: (tipo==="venta") ? (d.costosExtra||[]).map(c=>({ key:uid(), tipo:c.tipo||"otro", nota:c.nota||"", monto:c.monto||0, horas:c.horas||0, valorHora:c.valorHora||0 })) : [],
     cargosCliente: (tipo==="venta") ? (d.cargosCliente||[]).map(c=>({ key:uid(), nota:c.nota||"", monto:c.monto||0 })) : [],
     lineas: d.lineas.map(l=>({ key:uid(), productoId:l.productoId, sku:l.sku, nombre:l.nombre, cantidad:l.cantidad, precio:l.precio,
@@ -922,7 +926,7 @@ function copyDoc(tipo,id){
     numero: tipo==="venta" ? nextFacturaVenta() : "",
     clienteId: tipo==="venta"?(d.clienteId||""):"",
     envio: (tipo==="venta" && d.envio) ? {tipo:d.envio.tipo, monto:d.envio.monto||0} : {tipo:"free",monto:0},
-    handling:0, flete:0, medioPago: (tipo==="venta") ? (d.medioPago||"") : "",
+    handling:0, flete:0, medioPago: (tipo==="venta") ? (d.medioPago||"") : "", cuentaCobro: (tipo==="venta") ? (d.cuentaCobro||"") : "",
     costosExtra: (tipo==="venta") ? (d.costosExtra||[]).map(c=>({ key:uid(), tipo:c.tipo||"otro", nota:c.nota||"", monto:c.monto||0, horas:c.horas||0, valorHora:c.valorHora||0 })) : [],
     cargosCliente: (tipo==="venta") ? (d.cargosCliente||[]).map(c=>({ key:uid(), nota:c.nota||"", monto:c.monto||0 })) : [],
     lineas: d.lineas.map(l=>{
@@ -967,7 +971,7 @@ function verDoc(tipo,id){
   const einDet = (cli && cli.ein) || (d.clienteId && clienteById(d.clienteId) && clienteById(d.clienteId).ein) || "";
   let quien;
   if(!isC && cli){
-    quien = `<b>${esc(nombreVis(cli.nombre)||cli.nombre||"—")}</b>${cli.empresa?` · ${esc(cli.empresa)}`:""}
+    quien = `<b>${esc(nombreVis(cli.nombre)||cli.nombre||"—")}</b>${clienteEmpresaExtra(cli)?` · ${esc(clienteEmpresaExtra(cli))}`:""}
       ${clienteDireccion(cli)?`<br>${esc(clienteDireccion(cli))}`:""}
       ${(cli.email||cli.telefono)?`<br>${esc(cli.email||"")}${cli.email&&cli.telefono?" · ":""}${esc(cli.telefono||"")}`:""}
       ${einDet?`<br>${t("md.cli.ein")}: ${esc(einDet)}`:""}`;
@@ -979,12 +983,17 @@ function verDoc(tipo,id){
     `<div class="vd-f"><span class="vd-lbl">${t("common.date")}</span><div>${esc(fmtDate(d.fecha))}</div></div>`
   ];
   if(!isC && d.medioPago) datos.push(`<div class="vd-f"><span class="vd-lbl">${t("md.pay.method")}</span><div>${esc(payLabel(d.medioPago))}${d.refPago?` · ${esc(d.refPago)}`:""}</div></div>`);
+  // v146 · cobro pendiente (consignación): se completa desde acá
+  if(!isC && !d.medioPago) datos.push(`<div class="vd-f"><span class="vd-lbl">${t("md.pay.method")}</span><div><span class="pill cob-pend">${t("cob.pend")}</span>${cobroPuedeRegistrar(d)?` <button type="button" class="btn sm" data-cob-reg="${esc(d.id)}" style="margin-left:6px">${t("cob.reg")}</button>`:""}</div></div>`);
+  if(!isC && cuentaCobroNombre(d)) datos.push(cobroVerHTML(d,false));
   if(!isC && isAdmin()) datos.push(`<div class="vd-f"><span class="vd-lbl">${t("cl.v.soldby")}</span><div>${esc(saleVendedorNombre(d))}</div></div>`);
+  // nov 2026 · quién lo cargó (los documentos anteriores a este registro no lo tienen)
+  if(d.cargadoPor && (isAdmin()||isEditor())) datos.push(`<div class="vd-f"><span class="vd-lbl">${t("doc.by",{u:""}).replace(/[:\s]+$/,"")}</span><div>${esc(d.cargadoPor)}</div></div>`);
   const received = d.status===INVOICE_STATUS.RECEIVED;
   if(isC) datos.push(`<div class="vd-f vd-f-wide"><span class="vd-lbl">${t("cl.v.shipstatus")}</span>
       <div class="u-flex u-gap3 u-items-center u-wrap">
         <span class="inv-badge ${received?'received':'transit'}">${received?t('cl.v.received'):t('cl.v.intransit')}</span>
-        <button class="btn ghost sm" data-invstatus-modal="${d.id}">${received?t('cl.v.markintransit'):t('cl.v.markreceived')}</button>
+        <button class="btn ghost sm" data-invstatus-modal="${d.id}">${received?ICO.plane+t('cl.v.markintransit'):ICO.receive+t('cl.v.markreceived')}</button>
       </div></div>`);
 
   // ---- Líneas ----
@@ -1018,7 +1027,7 @@ function verDoc(tipo,id){
   }
 
   buildModal(`${isC?t("cl.v.purchase"):t("cl.v.invoice")} ${d.numero||""}`.trim(), `
-    <div class="vd-datos">${datos.join("")}</div>
+    <div class="vd-datos">${datos[0]}<div class="vd-meta">${datos.slice(1).join("")}</div></div>   <!-- v144: cliente arriba; fecha · cobro · vendedor en una fila pareja -->
     <div class="vd-lineas table-scroll"><table>
       <thead><tr><th>${t("common.product")}</th><th class="r">${t("cl.th.qty")}</th><th class="r">${isC?t("cl.th.cost"):t("cl.th.price")}</th><th class="r">${t("pdf.subtotal")}</th></tr></thead>
       <tbody>${rows}</tbody></table></div>
@@ -1027,10 +1036,10 @@ function verDoc(tipo,id){
       ${rent ? `<div class="vd-caja"><h4>${t("vd.profit")} <span class="hint">· ${t("vd.adminonly")}</span></h4>${rent}</div>` : ""}
     </div>
   `,[
-    {label:t("common.delete"),cls:"btn danger",act:()=>deleteDoc(tipo,id)},
-    ...(isC?[]:[{label:t("cl.btn.downloadpdf"),cls:"btn",act:()=>generarInvoicePDF(id)},
-              {label:t("cl.btn.copy"),cls:"btn",act:()=>copyDoc(tipo,id)}]),
-    {label:t("common.edit"),cls:"btn",act:()=>{ closeModal(); editDoc(tipo,id); }},
+    {label:t("common.delete"),icon:ICO.trash,cls:"btn danger",act:()=>deleteDoc(tipo,id)},
+    ...(isC?[]:[{label:t("cl.btn.downloadpdf"),icon:ICO.pdf,cls:"btn",act:()=>generarInvoicePDF(id)},
+              {label:t("cl.btn.copy"),icon:ICO.copy,cls:"btn",act:()=>copyDoc(tipo,id)}]),
+    {label:t("common.edit"),icon:ICO.edit,cls:"btn",act:()=>{ closeModal(); editDoc(tipo,id); }},
     {label:t("common.close"),cls:"btn",act:closeModal}
   ]);
   // Punto 1: el botón de estado dentro del detalle re-abre el modal ya actualizado.

@@ -50,13 +50,13 @@ function generarInvoicePDF(id){
   y+=17;
   const leftLines=[];
   if(cli){
-    leftLines.push(["bold", cli.nombre||""]);
+    leftLines.push(["bold", nombreVis(cli.nombre)||cli.nombre||""]);   // v146: mayúsculas al mostrar
     // empresa / contacto: sin repetir el nombre (antes salía "Ismael Lozano" dos veces)
-    const l2=[cli.empresa, cli.contacto].filter(x=> x && String(x).trim().toLowerCase()!==String(cli.nombre||"").trim().toLowerCase()).join(" · ");
+    const l2=[cli.empresa, cli.contacto].filter(x=> x && String(x).trim().toLowerCase()!==String(cli.nombre||"").trim().toLowerCase()).map(nombreVis).join(" · ");
     if(l2) leftLines.push(["normal", l2]);
     if(cliEIN) leftLines.push(["normal", tEn("md.cli.ein")+": "+cliEIN]);
-    if(cli.direccion) leftLines.push(["normal", cli.direccion]);
-    const cz=[cli.ciudad, cli.estado, cli.zip].filter(Boolean).join(", "); if(cz) leftLines.push(["normal", cz]);
+    if(cli.direccion) leftLines.push(["normal", nombreVis(cli.direccion)]);
+    const cz=[nombreVis(cli.ciudad||""), nombreVis(cli.estado||""), String(cli.zip||"").toUpperCase()].filter(Boolean).join(", "); if(cz) leftLines.push(["normal", cz]);
     if(cli.pais) leftLines.push(["normal", cli.pais]);
     const ce=[cli.email, cli.telefono].filter(Boolean).join("  ·  "); if(ce) leftLines.push(["muted", ce]);
   } else leftLines.push(["normal","—"]);
@@ -142,6 +142,7 @@ function generarInvoicePDF(id){
   const payCols = [];
   if(d.medioPago) payCols.push([tEn("pdf.inv.paymethod"), String(d.medioPago)]);   // se guarda en inglés (PAYMENT_METHODS): va tal cual
   if(d.refPago)   payCols.push([tEn("pdf.inv.payref"), String(d.refPago)]);
+  if(cuentaCobroNombre(d)) payCols.push(["Deposited to", cuentaCobroNombre(d)]);   // v133
   payCols.forEach(([lbl, val], i)=>{
     const x = M + i*200;
     setInk(MUT); doc.setFont("helvetica","bold"); doc.setFontSize(8);

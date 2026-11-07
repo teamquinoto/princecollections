@@ -237,7 +237,7 @@ async function xpBuild(desde, hasta, soc){
   const nM = Math.max(1, months.length);
 
   const wb = new ExcelJS.Workbook();
-  wb.creator = "Stock Manager"; wb.created = new Date();
+  wb.creator = "Prince Collections"; wb.created = new Date();
   wb.calcProperties.fullCalcOnLoad = true;
 
   /* --- helpers de hoja --- */

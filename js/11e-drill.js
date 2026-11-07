@@ -16,6 +16,12 @@
    tabla de hechos (finSaleLines).
    ============================================================ */
 let _drillLast = null;
+/* Líneas vendidas con costo 0: suele ser mercadería que entró sin costo (cobrada en especie,
+   regalo) o una venta sin capas de costo. Se marca para que no pase desapercibido. */
+(function(){ try{
+  Object.assign(I18N.en, { "dr.cost0":"cost 0", "dr.cost0.tip":"This line has no cost (stock that came in at $0 or with no cost layers): its margin shows as 100%." });
+  Object.assign(I18N.es, { "dr.cost0":"costo 0", "dr.cost0.tip":"Esta línea no tiene costo (mercadería que entró a $0 o sin capas de costo): su margen figura al 100%." });
+}catch(e){} })();
 const DRILL_MAX_ROWS = 300;
 
 /* v117: el mes se recorta al período SOLO si se superponen. Antes, tocar un mes que
@@ -80,7 +86,7 @@ function finDrillOpen(spec){
     const m = r.net - r.cogs;
     return `<tr class="drillable" data-drill-doc="${esc(r.ventaId)}" tabindex="0" title="${t("dr.opensale")}">
       <td class="num">${esc(fmtDate(r.fecha))}</td><td class="num">${esc(r.numero||"—")}</td><td>${esc(r.cliente||"—")}</td><td>${esc(r.vendedorId?r.vendedor:t("fin.house"))}</td>
-      <td>${r.sku?`<span class="sku">${esc(r.sku)}</span> `:""}${esc(r.nombre||"")}</td>
+      <td>${r.sku?`<span class="sku">${esc(r.sku)}</span> `:""}${esc(r.nombre||"")}${(r.cogs<=0.005 && r.cantidad>0)?` <span class="kpi-tag" title="${esc(t("dr.cost0.tip"))}">${t("dr.cost0")}</span>`:""}</td>
       <td class="num">${qty(r.cantidad)}</td><td class="num">${money(r.net)}</td><td class="num">${money(r.cogs)}</td>
       <td class="num ${m<0?"neg":""}">${money(m)}</td><td class="num ${m<0?"neg":""}">${r.net>0?fmtPct(m/r.net):"—"}</td></tr>`;
   }).join("") : `<tr><td class="u-center u-muted u-p5" colspan="10">${t("dr.nosales")}</td></tr>`;
@@ -111,9 +117,9 @@ function finDrillOpen(spec){
     <div class="dr-sum">
       <div><span>${t("dr.s.sales")}</span><b>${qty(ventas)}</b></div>
       <div><span>${t("an.th.units")}</span><b>${qty(T.u)}</b></div>
-      <div><span>${t("an.kpi.netrev")}</span><b>${money(T.net)}</b></div>
-      <div><span>${t("pnl.kpi.cogs")}</span><b>${money(T.cogs)}</b></div>
-      <div><span>${t("an.kpi.grossmargin")}</span><b class="${gm<0?"neg":""}">${money(gm)}</b></div>
+      <div><span>${t("an.kpi.netrev")}</span><b>${bigMoney(T.net)}</b></div>
+      <div><span>${t("pnl.kpi.cogs")}</span><b>${bigMoney(T.cogs)}</b></div>
+      <div><span>${t("an.kpi.grossmargin")}</span><b class="${gm<0?"neg":""}">${bigMoney(gm)}</b></div>
       <div><span>${t("fin.kpi.gmpct")}</span><b>${T.net>0?fmtPct(gm/T.net):"—"}</b></div>
     </div>
     <h4 class="dr-h">${t("dr.sales.title")}</h4>

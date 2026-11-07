@@ -382,8 +382,20 @@ function pnlWaterfallSVG(P){
   return `<svg viewBox="0 0 ${W} ${H}" style="display:block;min-width:620px;width:100%;height:auto;max-height:380px;margin:0 auto" role="img" aria-label="${t("an.aria.waterfall")}">${grid}${conns}${bars}${vals}${labs}</svg>`;
 }
 
-/* --- Columnas por mes (una serie). Negativos en rojo; eje Y con escala linda. --- */
-function trendChartSVG(items, fmt, color){
+/* --- Columnas por mes (una serie). Negativos en rojo; eje Y con escala linda. ---
+   v-graf: las etiquetas de valor ya no se pisan. Van sin el símbolo de moneda (el eje ya lo
+   muestra), el tamaño se ajusta al ancho de cada columna y, si igual no entran, se muestra
+   una sí y una no (con el valor completo siempre en el tooltip).
+   opts.foot = { label, values:[...] }: fila extra debajo de los meses DENTRO del gráfico
+   (p. ej. Margen % por semana), así queda alineada con cada barra en cualquier ancho. */
+function trendNumCompact(v){
+  const a=Math.abs(v||0), s=(v||0)<0?"-":"";
+  if(a>=1e6) return s+nfDec(1).format(a/1e6)+"M";
+  if(a>=1e3) return s+nfDec(1).format(a/1e3)+"k";
+  return s+nfDec(0).format(a);
+}
+function trendChartSVG(items, fmt, color, opts){
+  opts = opts || {};
   const data=items||[];
   const COL = color || "var(--chart-1)";
   if(!data.length) return `<div class="cempty">${t("an.nosales")}</div>`;
@@ -391,17 +403,35 @@ function trendChartSVG(items, fmt, color){
   const vs=data.map(d=>d.value);
   const maxV=finNiceMax(Math.max(...vs,0)), minV=Math.min(0,...vs)<0 ? -finNiceMax(-Math.min(...vs)) : 0;
   const axFmt = v=> isMoney ? finCompactAxis(v) : qty(v);
-  const W=560,H=230,padT=20,padB=28,padR=6;
-  const padL=finAxisPad([maxV,(maxV+minV)/2,minV].map(axFmt), 44)*0.9, plot=H-padT-padB;
+  const foot = opts.foot && Array.isArray(opts.foot.values) ? opts.foot : null;
+  const W=560, padT=20, padR=6, footH = foot ? 20 : 0;
+  const padB=28+footH, H=230+footH;
+  let padL=finAxisPad([maxV,(maxV+minV)/2,minV].map(axFmt), 44)*0.9;
+  if(foot && foot.label) padL=Math.max(padL, String(foot.label).length*10.5*0.6+10);
+  const plot=H-padT-padB;
   const dom=(maxV-minV)||1, y=v=> padT+(maxV-v)/dom*plot;
   const n=data.length,gap=10;
   const bw=Math.min(60,Math.max(5,(W-padL-padR-gap*(n-1))/n));
   const contentW=n*bw+gap*(n-1), startX=padL+Math.max(0,(W-padL-padR-contentW)/2);
-  let grid="",cols="",labs="",vlab="";
+  // etiquetas de valor: texto, tamaño que entra en la columna y, si no entra, una sí y una no
+  const vtxt = d=> (d.muted?"? ":"") + (isMoney ? trendNumCompact(d.value) : qty(d.value));
+  const slot = bw+gap, CH=0.62;   // ancho aprox. de un carácter mono = 0,62 × tamaño
+  const maxLen = Math.max(...data.map(d=> vtxt(d).length));
+  let vfs = Math.min(10.5, (slot-3)/(maxLen*CH));
+  let vEvery = 1;
+  if(vfs < 8){ vfs = Math.min(10.5, (slot*2-3)/(maxLen*CH)); vEvery = 2; }
+  if(vfs < 7){ vfs = 0; }
+  let grid="",cols="",labs="",vlab="",feet="";
   [maxV, (maxV+minV)/2, minV].forEach(gv=>{ const gy=y(gv);
     grid+=`<line x1="${padL}" y1="${gy.toFixed(1)}" x2="${W-padR}" y2="${gy.toFixed(1)}" stroke="var(--line)" stroke-width="1"/>`
         +`<text x="${padL-6}" y="${(gy+4).toFixed(1)}" text-anchor="end" font-size="10.5" fill="var(--muted)" font-family="var(--mono)">${esc(axFmt(gv))}</text>`; });
-  const every = n>12 ? 2 : 1;
+  // etiquetas del eje X: si no entran, una sí y una no
+  const maxLab = Math.max(...data.map(d=> String(d.label||"").length));
+  let every = n>12 ? 2 : 1;
+  let lfs = Math.min(11, (slot*every-3)/(maxLab*0.55));
+  if(lfs < 9){ every = 2; lfs = Math.min(11, (slot*every-3)/(maxLab*0.55)); }
+  lfs = Math.max(8.5, lfs);
+  if(foot && foot.label) feet+=`<text x="${(padL-6).toFixed(1)}" y="${H-6}" text-anchor="end" font-size="10.5" font-weight="700" fill="var(--pos)">${esc(foot.label)}</text>`;
   data.forEach((d,i)=>{
     const x=startX+i*(bw+gap), yy=y(Math.max(0,d.value)), y0=y(Math.min(0,d.value)), h=Math.max(d.value?1:0,Math.abs(y0-yy));
     const neg=d.value<0;
@@ -411,10 +441,13 @@ function trendChartSVG(items, fmt, color){
     // Con drill: zona táctil de toda la columna (alto completo), no sólo la barra
     if(d.drill) cols+=`<rect class="drill-hit" x="${(x-gap/2).toFixed(1)}" y="${padT}" width="${(bw+gap).toFixed(1)}" height="${(plot+20).toFixed(1)}" data-drill="${esc(d.drill)}" tabindex="0" role="button" aria-label="${esc(t("dr.aria",{x:d.label}))}"><title>${esc(d.label)}: ${esc(fmt(d.value))}${d.muted&&d.note?" — "+esc(d.note):""} — ${t("dr.tap")}</title></rect>`;
     const cx=x+bw/2;
-    if(n<=12) vlab+=`<text x="${cx.toFixed(1)}" y="${(neg?y0+12:yy-5).toFixed(1)}" text-anchor="middle" font-size="10.5" font-weight="700" font-family="var(--mono)" fill="${d.muted?"var(--muted)":"var(--text)"}">${esc(d.muted?"? ":"")}${esc(isMoney?finCompact(d.value):qty(d.value))}</text>`;
-    if(i%every===0) labs+=`<text x="${cx.toFixed(1)}" y="${H-padB+16}" text-anchor="middle" font-size="11" fill="var(--muted)">${esc(d.label)}</text>`;
+    // con etiquetas salteadas se muestra siempre la última (la más reciente)
+    const showV = vfs>0 && (vEvery===1 || (n-1-i)%2===0);
+    if(showV) vlab+=`<text x="${cx.toFixed(1)}" y="${(neg?y0+12:yy-5).toFixed(1)}" text-anchor="middle" font-size="${vfs.toFixed(1)}" font-weight="700" font-family="var(--mono)" fill="${d.muted?"var(--muted)":"var(--text)"}">${esc(vtxt(d))}</text>`;
+    if((n-1-i)%every===0) labs+=`<text x="${cx.toFixed(1)}" y="${H-padB+16}" text-anchor="middle" font-size="${lfs.toFixed(1)}" fill="var(--muted)">${esc(d.label)}</text>`;
+    if(foot) feet+=`<text x="${cx.toFixed(1)}" y="${H-6}" text-anchor="middle" font-size="10.5" font-weight="600" font-family="var(--mono)" fill="var(--text)">${esc(foot.values[i]==null?"—":foot.values[i])}</text>`;
   });
-  return `<svg viewBox="0 0 ${W} ${H}" style="display:block;width:100%;height:auto;max-height:280px;margin:0 auto" role="img" aria-label="${t("an.aria.trend")}">${grid}${cols}${vlab}${labs}</svg>`;
+  return `<svg viewBox="0 0 ${W} ${H}" style="display:block;width:100%;height:auto;max-height:${280+footH}px;margin:0 auto" role="img" aria-label="${t("an.aria.trend")}">${grid}${cols}${vlab}${labs}${feet}</svg>`;
 }
 
 /* ============================================================
@@ -658,7 +691,7 @@ function finStockHistoryPanel(q, r){
   <div class="u-mb5 panel chart">
     <div class="u-flex u-between u-items-start u-gap3 u-wrap">
       <div><p class="ctitle">${t("stk.title")}${d.soc?` · ${esc(storeName(d.soc))}`:""}</p><p class="csub">${t("stk.sub")}</p></div>
-      ${isAdmin()?`<button type="button" class="btn ghost sm" id="stk_refreeze">${t("stk.refreeze")}</button>`:""}
+      ${isAdmin()?`<button type="button" class="btn ghost sm" id="stk_refreeze">${ICO.sync}${t("stk.refreeze")}</button>`:""}
     </div>
     ${trendChartSVG(pts.map(p=>({ label:p.label, value:p.value, drill:p.drill })), money, "var(--series-purch)")}
     <p class="fin-help">${t(snaps===1?"stk.legend1":"stk.legend",{n:snaps})}${oldSnaps?" "+t("stk.socnote"):""}</p>
@@ -690,11 +723,10 @@ function semanasPanel(q){
   const cmp = (()=>{   // semana en curso: comparar a igual cantidad de días
     const dias = ((a.getDay()+6)%7)+1; return dias<7 ? t("wk.partial",{d:dias}) : "";
   })();
-  const gpRow = W.map(w=> `<td class="num">${w.net>0?fmtPct(w.gp/w.net,0):"—"}</td>`).join("");
+  const gpVals = W.map(w=> w.net>0 ? fmtPct(w.gp/w.net,0) : "—");   // v-graf: Margen % dentro del gráfico, alineado con cada semana
   return `<div class="u-mb5 panel chart">
     <p class="ctitle">${t("wk.title")}</p>
     <p class="csub">${t("wk.sub")} ${cmp}${wow!=null?" "+t("wk.wow",{p:(wow>=0?"+":"")+fmtPct(wow,0)}):""}</p>
-    ${trendChartSVG(items, money_ ? qty : money)}
-    <div class="table-scroll"><table class="u-mt2 fintbl"><tbody><tr><td style="color:var(--pos);font-weight:700">${t("fin.s.gm")}</td>${gpRow}</tr></tbody></table></div>
+    ${trendChartSVG(items, money_ ? qty : money, null, { foot:{ label:t("fin.s.gm"), values:gpVals } })}
   </div>`;
 }

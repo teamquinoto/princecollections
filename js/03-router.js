@@ -3,7 +3,7 @@
    ============================================================ */
 let view = "dash";
 const SECTION_OF = { guia:"help", dash:"op", ventas:"op", compras:"op", mov:"op",
-                     prod:"cat", clientes:"cat",
+                     prod:"cat", grupo:"cat", clientes:"cat",
                      resumen:"fin", analisis:"fin", pnl:"fin", gastos:"fin", plan:"fin", inv:"fin", datos:"dat", usuarios:"dat" };
 let activeSection = "op";
 function syncSectionUI(){
@@ -28,7 +28,7 @@ document.querySelectorAll("#nav button, #navMob button, #tabbar button[data-view
 });
 function setView(v){
   // gate: admin-only views (purchases, investment, analysis, data) fall back to dashboard for sellers
-  if(!isAdmin() && ADMIN_VIEWS.includes(v)) v="dash";
+  if(!vistaPermitida(v)) v="dash";   // v134: el editor tiene su propia lista
   /* v128: los filtros de Finanzas (período, mes elegido, juego, idioma, país, vendedor)
      se MANTIENEN al pasar entre Resumen, Análisis, P&L y Plan: si estás viendo septiembre,
      seguís viendo septiembre hasta tocar "Limpiar". (Antes, v91, el período volvía a "Mes"
@@ -78,10 +78,14 @@ function wireStoreBar(){
 function applyRoleUI(){
   // hide admin-only nav entries for sellers
   document.querySelectorAll("[data-admin-only]").forEach(el=> el.style.display = isAdmin()?"":"none");
+  // v134 · editor: ve sólo sus pestañas (compras, movimientos, productos…), sin ventas ni finanzas
+  if(isEditor()) document.querySelectorAll("#nav button[data-view], #navMob button[data-view], #tabbar button[data-view], #moreSheet button[data-view]")
+    .forEach(el=>{ el.style.display = vistaPermitida(el.dataset.view) ? "" : "none"; });
+  document.body.classList.toggle("role-editor", isEditor());
   // role badge (mobile top bar): shows who is logged in and their role
   const admin = isAdmin();
   const nombre = (session && session.name) || (session && session.user) || "";
-  const txt = session ? (admin ? t("role.admin") : (t("role.seller")+" · "+(nombre||"—"))) : t("role.local");
+  const txt = session ? (admin ? t("role.admin") : ((isEditor()?t("role.editor"):t("role.seller"))+" · "+(nombre||"—"))) : t("role.local");
   document.querySelectorAll("[data-rolebadge]").forEach(el=>{
     el.textContent = txt;
     el.style.background = admin ? "color-mix(in srgb, var(--accent) 16%, transparent)" : "color-mix(in srgb, var(--up) 18%, transparent)";
@@ -89,7 +93,7 @@ function applyRoleUI(){
   });
   // v126: chip de la barra superior (PC) — iniciales + nombre de quien está logueado + rol
   const ini = String(nombre||"?").trim().split(/[\s._-]+/).filter(Boolean).map(w=>w[0]).join("").slice(0,2).toUpperCase() || "?";
-  const rol = admin ? t("role.admin") : t("role.seller");
+  const rol = admin ? t("role.admin") : (isEditor() ? t("role.editor") : t("role.seller"));
   document.querySelectorAll("[data-userchip]").forEach(el=>{
     el.hidden = !session;
     if(!session) return;
@@ -116,7 +120,8 @@ function render(){
   else if(view==="compras") m.innerHTML = bar+viewDocs("compra");
   else if(view==="ventas") m.innerHTML = bar+viewDocs("venta");
   else if(view==="clientes") m.innerHTML = viewClientes();
-  else if(view==="mov") m.innerHTML = isAdmin()? (bar+viewMov()) : viewDash();
+  else if(view==="grupo") m.innerHTML = vistaPermitida("grupo")? viewGrupo() : viewDash();   // v135
+  else if(view==="mov") m.innerHTML = vistaPermitida("mov")? (bar+viewMov()) : viewDash();
   else if(view==="inv") m.innerHTML = isAdmin()? viewInversiones() : viewDash();
   else if(view==="pnl") m.innerHTML = isAdmin()? (bar+viewPnL()) : viewDash();
   else if(view==="datos") m.innerHTML = viewDatos();
