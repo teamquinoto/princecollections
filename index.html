@@ -13,13 +13,14 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Gestor">
-<title>Stock Manager</title>
+<meta name="apple-mobile-web-app-title" content="Prince">
+<title>Prince Collections</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700;800;900&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="js/00a-tema.js"></script>
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="configuracion.css">
   <link rel="stylesheet" href="guia.css">
 </head>
 <body>
@@ -33,7 +34,7 @@
   <div class="login-aurora" aria-hidden="true"><span></span><span></span><span></span></div>
   <div class="login-card">
     <div class="login-logo-wrap"><img src="icon-512.png" alt="" class="login-logo" width="84" height="84"></div>
-    <h1>Stock Manager</h1>
+    <h1>Prince Collections</h1>
     <p class="login-sub" data-i18n="core.login.sub">Your inventory, synced across all your devices.</p>
     <div class="field"><label for="loginUser" data-i18n="core.login.user">Username</label>
       <input class="inp" id="loginUser" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="your username" data-i18n-ph="core.login.user.ph"></div>
@@ -48,7 +49,7 @@
     </div>
     <div id="loginErr" class="login-err"></div>
     <button class="btn primary login-btn" id="loginBtn" data-i18n="core.login.signin">Sign in</button>
-    <p class="login-build">build v116</p>
+    <p class="login-build">build v152</p>
   </div>
 </div>
 <div class="topbar" id="topbar">
@@ -56,7 +57,7 @@
     <span class="tb-mark" aria-hidden="true">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/></svg>
     </span>
-    <span class="tb-name">Stock Manager</span>
+    <span class="tb-name">Prince Collections</span>
   </div>
   <div class="tb-right">
     <button type="button" class="tb-search" data-open-cmdk aria-label="Search" data-i18n-title="cmdk.ph">
@@ -83,7 +84,7 @@
   <aside class="side">
     <div class="brand">
       <img src="icon-192.png" alt="" class="brand-logo" width="34" height="34">
-      <h1>Stock Manager</h1>
+      <h1>Prince Collections</h1>
     </div>
     <nav class="nav" id="nav">
       <div class="nav-group-title" data-i18n="sec.op">Operations</div>
@@ -93,6 +94,7 @@
       <button data-view="mov" data-section="op" data-admin-only><span class="ico"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4v16M7 4 3 8M7 4l4 4"/><path d="M17 20V4M17 20l4-4M17 20l-4-4"/></svg></span><span data-i18n="nav.mov">Movements</span></button>
       <div class="nav-group-title" data-i18n="sec.cat">Catalog</div>
       <button data-view="prod" data-section="cat"><span class="ico"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7 12 12l8.7-5M12 22V12"/></svg></span><span data-i18n="nav.prod">Products</span></button>
+      <button data-view="grupo" data-section="cat" data-admin-only><span class="ico"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg></span><span data-i18n="nav.grupo">Group stock</span></button>
       <button data-view="clientes" data-section="cat"><span class="ico"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9.5" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/></svg></span><span data-i18n="nav.clientes">Customers</span></button>
       <div class="nav-group-title" data-admin-only data-i18n="sec.fin">Finance</div>
       <button data-view="resumen" data-section="fin" data-admin-only><span class="ico"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 13a9 9 0 0 1 18 0"/><path d="M12 13l4-4"/><path d="M5 19h14"/></svg></span><span data-i18n="nav.resumen">Overview</span></button>
@@ -134,6 +136,7 @@
     <button data-view="gastos" data-section="fin" data-admin-only data-i18n="nav.gastos.short">Opex</button>
     <button data-view="plan" data-section="fin" data-admin-only data-i18n="nav.plan">Plan vs actual</button>
     <button data-view="prod" data-section="cat" data-i18n="nav.prod">Products</button>
+    <button data-view="grupo" data-section="cat" data-admin-only data-i18n="nav.grupo">Group stock</button>
     <button data-view="compras" data-section="op" data-admin-only data-i18n="nav.compras">Purchases</button>
     <button data-view="ventas" data-section="op" data-i18n="nav.ventas">Sales</button>
     <button data-view="clientes" data-section="cat" data-i18n="nav.clientes.short">Cust.</button>
@@ -244,6 +247,10 @@
 <script src="js/32-importar-pdf.js"></script>
 <script src="js/33-ficha-producto.js"></script>
 <script src="js/34-datos-io.js"></script>
+<script src="js/35-sku-asociados.js"></script>
+<script src="js/36-cobros.js"></script>
+<script src="js/37-editor.js"></script>
+<script src="js/39-stock-grupo.js"></script>
 <script src="js/18-papelera.js"></script>
 <script src="js/19-view-guia.js"></script>
 <script src="js/22-ui-modales.js"></script>

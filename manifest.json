@@ -1,6 +1,6 @@
 {
-  "name": "Stock Manager",
-  "short_name": "Stock",
+  "name": "Prince Collections",
+  "short_name": "Prince",
   "description": "Gestor de stock: las compras suman, las ventas restan. Importá facturas en PDF y seguí cada movimiento, sincronizado entre dispositivos.",
   "start_url": "./index.html",
   "scope": "./",

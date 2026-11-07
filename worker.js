@@ -47,6 +47,73 @@
        Mientras tanto se sigue aceptando el header Bearer.
    12) Rate limit de login atómico (un solo UPSERT) y SECRET_LOGIN="off"
        para apagar el admin "de respaldo" del secret (no admite 2FA).
+
+   NUEVO EN v5 (correcciones):
+   13) SECRET_LOGIN="off" también corta las sesiones YA abiertas con
+       cuentas del secret (antes sólo frenaba los logins nuevos).
+   14) Venta de vendedor sin stock suficiente = rechazada (va a la
+       papelera con el motivo). Antes se aplicaba igual y el stock
+       quedaba negativo (dos vendedores con la última unidad a la vez).
+       Restaurar una venta de la papelera sin stock también se frena.
+   15) Admin con "conservar mi versión": además de rescatar ventas
+       nuevas de vendedores, respeta las que un vendedor EDITÓ o BORRÓ
+       mientras tanto (si el admin no tocó esa venta en su copia).
+   16) Restaurar una compra: el lote FIFO vuelve con la fecha de la
+       factura (antes "ahora": pasaba al final de la cola).
+   17) Login sin distinguir mayúsculas en el usuario.
+
+   NUEVO EN v6 (lectura de facturas con IA más rápida):
+   18) Gemini con el pensamiento al mínimo que admite cada modelo (antes
+       razonaba en nivel "medio" por defecto: la mayor parte de la demora).
+   19) Respuesta con esquema fijo (responseSchema): ya no hay JSON roto
+       que obligue a leer la factura de nuevo con otro modelo.
+   20) Tope de 45 s por intento: si un modelo se cuelga, pasa al siguiente.
+   21) La API key viaja en un header (antes en la URL).
+   22) Modelos configurables sin tocar código: variable GEMINI_MODELS.
+   23) Cada lectura deja en los logs el modelo, los ms y los tokens.
+
+   NUEVO EN v7:
+   24) /parse-invoice acepta { texto } además de { pdf }: la app manda el
+       texto que ya sacó del PDF (mucho más liviano que el PDF entero). Si
+       no hay texto (PDF escaneado) sigue mandando el PDF como antes.
+
+   NUEVO EN v11 (nov 2026):
+   - Cada compra y venta guarda quién la cargó (cargadoPor), lo pone el servidor.
+   - Perfil Editor: sólo edita las compras/ventas que cargó él, salvo que el admin le
+     dé el permiso "editar lo de otros" (columna usuarios.edita_otros, se crea sola).
+
+   NUEVO EN v8:
+   25) Cascada "rápido primero, verificado": arranca con Flash-Lite (el más
+       rápido) y CUADRA lo que leyó (líneas + flete + cargos + impuestos =
+       total de la factura). Si no cuadra, recién ahí prueba el modelo
+       siguiente, más pesado. Si ninguno cuadra, devuelve la mejor lectura
+       con cuadra:false para que la app avise.
+   26) Los cargos que no son mercadería (Handling Fees, etc.) vienen aparte
+       en "cargos" y la app los carga como handling de la compra.
+
+   NUEVO EN v9 (dos admins a la vez, va con la app v131):
+   27) Dos ADMINS pueden trabajar a la vez sin "Conflicto". Cada versión
+       queda en la tabla `estado_hist` (se crea sola; guarda las últimas
+       HIST_MAX). Cuando un admin guarda sobre una versión vieja, el
+       servidor busca esa versión base y combina documento por documento
+       (combinar3): lo que tocó sólo uno, queda; el stock se combina por
+       diferencias. Sólo hay conflicto si los dos tocaron JUSTO lo mismo,
+       y la respuesta dice qué fue.
+
+   NUEVO EN v10 (va con la app v134):
+   28) Cuenta de cobro en las ventas de vendedores: el servidor acepta
+       cuentaCobro sólo si existe en config.cuentasCobro y guarda el
+       nombre como foto (cuentaCobroNombre). Los vendedores reciben la
+       lista de cuentas en su vista filtrada.
+   29) Perfil EDITOR (role "editor"): carga compras (y lee facturas con
+       IA) y mantiene productos. Guarda como el admin, pero el servidor
+       devuelve a como estaban las ventas, la configuración, los gastos y
+       el plan, y rechaza si intenta borrar compras, productos o clientes.
+       Nunca puede forzar ("sobrescribir el servidor").
+   30) Stock del grupo: /grupo/stock (entre servidores, con GRUPO_KEY) y
+       /grupo/consolidado (admin/editor). Variables nuevas: GRUPO_KEY
+       (secreto), GRUPO_PEER_URL (dirección del servidor de Select) y,
+       opcional, GRUPO_NOMBRE. Sin costos ni precios.
    ============================================================ */
 
 const APP_NAME = "stockmanager";
@@ -66,6 +133,7 @@ const BORRADO_MASIVO_PCT = 0.30;                  // >30% de una colección = pe
 const BORRADO_MASIVO_MIN = 10;                    // sólo si la colección tiene 10+ elementos
 const MIN_PASS = 8;
 const MAX_BAJAS_VENDEDOR = 5;                     // más bajas juntas de un vendedor = sospechoso
+const HIST_MAX = 300;                             // v9: versiones que se guardan para poder combinar (las más viejas se borran)
 
 // v4
 const COOKIE_NAME = "gs_sess";
@@ -183,7 +251,71 @@ async function verifyPass(pass, saltHex, hashHex) {
   return igualSeguro(await pbkdf2(String(pass), saltHex), hashHex);
 }
 
-function normRole(r) { r = String(r || "").toLowerCase(); return (r === "admin") ? "admin" : "seller"; }
+function normRole(r) { r = String(r || "").toLowerCase(); return (r === "admin" || r === "editor") ? r : "seller"; }   // v10: + editor
+/* Perfil EDITOR · carga compras y mantiene productos. Sobre la versión en la que
+   trabajó (ref): lo que no le corresponde (ventas, configuración, gastos, plan…)
+   vuelve a como estaba, y no puede borrar compras, productos ni clientes.
+   Devuelve {es, en} si hay que rechazar, o null si se puede seguir. */
+const EDITOR_RESTAURA = ["config", "ventas", "gastos", "fpa", "stockSnaps", "solicitudes", "presupuesto"];
+const EDITOR_SIN_BAJAS = ["compras", "productos", "clientes"];
+function protegerEditor(ref, mio) {
+  if (!ref || !mio) return { es: "No hay una versión base para comparar.", en: "No base version to compare." };
+  for (const k of EDITOR_RESTAURA) {
+    if (ref[k] !== undefined) mio[k] = JSON.parse(JSON.stringify(ref[k]));
+    else delete mio[k];
+  }
+  for (const col of EDITOR_SIN_BAJAS) {
+    const tiene = new Set((Array.isArray(mio[col]) ? mio[col] : []).map(d => d && d.id));
+    const faltan = (Array.isArray(ref[col]) ? ref[col] : []).filter(d => d && d.id && !tiene.has(d.id));
+    if (faltan.length) return { es: `El perfil Editor no puede borrar ${col} (${faltan.length}).`, en: `The Editor profile can't delete ${col} (${faltan.length}).` };
+  }
+  return null;
+}
+
+/* v11 · QUIÉN CARGÓ CADA DOCUMENTO (compras y ventas): lo pone el servidor.
+   Doc nuevo → el usuario que lo guardó. Doc que ya existía → conserva el autor
+   que tenía (nadie lo puede cambiar desde la app). Los docs viejos quedan sin autor. */
+function marcarAutor(prev, next, user) {
+  for (const col of ["compras", "ventas"]) {
+    const pm = new Map(((prev && prev[col]) || []).map(d => [d && d.id, d]));
+    for (const d of (next[col] || [])) {
+      if (!d || typeof d !== "object") continue;
+      const p = pm.get(d.id);
+      if (p) { if (p.cargadoPor) d.cargadoPor = p.cargadoPor; else delete d.cargadoPor; }
+      else if (user) d.cargadoPor = String(user);
+    }
+  }
+}
+/* v11 · Perfil EDITOR: sólo edita los documentos que cargó él, salvo que el admin le
+   haya dado el permiso "editar lo de otros" (usuarios.edita_otros). Marcar una compra
+   como recibida no cuenta como edición. Devuelve el primer doc ajeno modificado o null. */
+const ED_IGNORA = new Set(["srvRev", "status", "cargadoPor"]);
+function edCanon(x) {
+  if (x === undefined) return "u";
+  if (x === null || typeof x !== "object") return JSON.stringify(x);
+  if (Array.isArray(x)) return "[" + x.map(edCanon).join(",") + "]";
+  // vacío = ausente: la app completa campos viejos al abrir (p. ej. vendedor "" → null) y eso no es una edición
+  return "{" + Object.keys(x).filter(k => !ED_IGNORA.has(k) && x[k] !== undefined && x[k] !== null && x[k] !== "").sort()
+    .map(k => JSON.stringify(k) + ":" + edCanon(x[k])).join(",") + "}";
+}
+function editorAjeno(ref, mio, user, cols) {
+  const yo = String(user || "").toLowerCase();
+  for (const col of cols) {
+    const rm = new Map(((ref && ref[col]) || []).map(d => [d && d.id, d]));
+    for (const d of (mio[col] || [])) {
+      const r = d && rm.get(d.id);
+      if (!r || String(r.cargadoPor || "").toLowerCase() === yo) continue;
+      if (edCanon(r) !== edCanon(d)) return { col, numero: r.numero || r.id, quien: r.cargadoPor || "" };
+    }
+  }
+  return null;
+}
+function msgAjeno(a) {
+  const es = a.col === "ventas" ? "las ventas" : "las compras", en = a.col === "ventas" ? "sales" : "purchases";
+  const esDoc = (a.col === "ventas" ? "La venta " : "La compra ") + a.numero, enDoc = (a.col === "ventas" ? "Sale " : "Purchase ") + a.numero;
+  return { es: `Sólo podés editar ${es} que cargaste vos. ${esDoc} ${a.quien ? "la cargó " + a.quien : "es anterior a este control"}. Pedile a un administrador que la cambie o que te dé permiso.`,
+           en: `You can only edit ${en} you entered. ${enDoc} ${a.quien ? "was entered by " + a.quien : "predates this control"}. Ask an administrator to change it or to grant you permission.` };
+}
 
 /* ============================================================
    ESQUEMA (se asegura una vez por instancia del Worker)
@@ -199,7 +331,9 @@ const SCHEMA = [
   "CREATE TRIGGER IF NOT EXISTS auditoria_sin_delete BEFORE DELETE ON auditoria BEGIN SELECT RAISE(ABORT, 'auditoria: solo se puede agregar'); END",
   "CREATE TRIGGER IF NOT EXISTS papelera_sin_update BEFORE UPDATE ON papelera BEGIN SELECT RAISE(ABORT, 'papelera: solo se puede agregar'); END",
   "CREATE TRIGGER IF NOT EXISTS papelera_sin_delete BEFORE DELETE ON papelera BEGIN SELECT RAISE(ABORT, 'papelera: solo se puede agregar'); END",
-  "CREATE TRIGGER IF NOT EXISTS estado_sin_delete BEFORE DELETE ON estado BEGIN SELECT RAISE(ABORT, 'estado: prohibido borrar'); END"
+  "CREATE TRIGGER IF NOT EXISTS estado_sin_delete BEFORE DELETE ON estado BEGIN SELECT RAISE(ABORT, 'estado: prohibido borrar'); END",
+  // v9: versiones anteriores del estado (base para combinar cambios de dos admins)
+  "CREATE TABLE IF NOT EXISTS estado_hist (space TEXT NOT NULL, rev INTEGER NOT NULL, data TEXT, data_gz BLOB, ts TEXT, PRIMARY KEY (space, rev))"
 ];
 let schemaListo = null;
 function ensureSchema(env) {
@@ -211,6 +345,8 @@ function ensureSchema(env) {
       // Columna nueva para revocar sesiones (falla si ya existe: es lo esperado).
       try { await env.DB.prepare("ALTER TABLE usuarios ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0").run(); } catch (_) {}
       try { await env.DB.prepare("ALTER TABLE estado ADD COLUMN data_gz BLOB").run(); } catch (_) {}
+      // v11: permiso del editor para editar documentos que cargaron otros (0 = sólo los suyos)
+      try { await env.DB.prepare("ALTER TABLE usuarios ADD COLUMN edita_otros INTEGER NOT NULL DEFAULT 0").run(); } catch (_) {}
       // v4: 2FA (TOTP). Columnas nuevas; si ya existen, el ALTER falla y se ignora.
       for (const col of ["totp_secret TEXT", "totp_pend TEXT", "totp_on INTEGER NOT NULL DEFAULT 0",
                          "totp_ult INTEGER NOT NULL DEFAULT 0", "totp_recup TEXT"]) {
@@ -251,7 +387,9 @@ function identidadSecret(env, user) {
   return null;
 }
 async function resolveUserDB(env, user, pass) {
-  const row = await env.DB.prepare("SELECT * FROM usuarios WHERE user = ?").bind(user).first();
+  /* v5: los usuarios se crean en minúscula (POST /users), pero el login buscaba tal cual:
+     "Juan" no encontraba a "juan", fallaba como contraseña incorrecta y sumaba al bloqueo. */
+  const row = await env.DB.prepare("SELECT * FROM usuarios WHERE user = ? COLLATE NOCASE").bind(user).first();
   if (row) {
     const ok = await verifyPass(pass, row.salt, row.pass_hash);
     if (!ok) return null;
@@ -260,7 +398,7 @@ async function resolveUserDB(env, user, pass) {
       user: row.user, role,
       vendedorId: role === "seller" ? String(row.vendedor_id || row.user).trim().toLowerCase() : "",
       name: row.name || row.user, tv: Number(row.token_version || 0),
-      fuente: "db", totp: !!row.totp_on
+      fuente: "db", totp: !!row.totp_on, editaOtros: role === "editor" && !!Number(row.edita_otros || 0)
     };
   }
   // Usuario que no está en D1: igual gastamos el tiempo de un PBKDF2 para que no
@@ -294,12 +432,16 @@ async function registrarFallo(env, clave, max, ahora) {
 async function identidadVigente(env, tok) {
   const user = String(tok.u || "");
   if (!user) return null;
-  const row = await env.DB.prepare("SELECT user, role, vendedor_id, name, token_version FROM usuarios WHERE user = ?").bind(user).first();
+  const row = await env.DB.prepare("SELECT * FROM usuarios WHERE user = ?").bind(user).first();
   if (row) {
     if (Number(row.token_version || 0) !== Number(tok.tv || 0)) return null;
     const role = normRole(row.role);
-    return { u: row.user, role, vid: role === "seller" ? String(row.vendedor_id || row.user).trim().toLowerCase() : "", name: row.name || row.user, sp: tok.sp || "main" };
+    return { u: row.user, role, vid: role === "seller" ? String(row.vendedor_id || row.user).trim().toLowerCase() : "", name: row.name || row.user, sp: tok.sp || "main",
+             eo: role === "editor" && !!Number(row.edita_otros || 0) };
   }
+  /* v5: con SECRET_LOGIN="off" tampoco valen las sesiones YA abiertas con esas cuentas.
+     Antes sólo se frenaba el login nuevo: un token emitido antes seguía andando 30 días. */
+  if (String(env.SECRET_LOGIN || "").toLowerCase() === "off") return null;
   const s = identidadSecret(env, user);
   if (!s) return null;
   return { u: user, role: s.role, vid: s.vendedorId, name: s.name, sp: tok.sp || "main" };
@@ -401,7 +543,7 @@ async function emitirSesion(env, CORS, u, ahora) {
     u: u.user, role: u.role, vid: u.vendedorId || "", tv: u.tv || 0, sp: "main",
     iat: ahora, exp: ahora + TOKEN_TTL_MS
   });
-  const body = { ok: true, user: u.user, role: u.role, vendedorId: u.vendedorId || "", name: u.name || u.user, space: "main" };
+  const body = { ok: true, user: u.user, role: u.role, vendedorId: u.vendedorId || "", name: u.name || u.user, space: "main", editaOtros: !!u.editaOtros };
   if (!modoCookie(env)) return json({ ...body, token }, 200, CORS);
   // Modo cookie: el token NO va en el cuerpo, así nunca toca localStorage.
   return json({ ...body, cookie: true }, 200, { ...CORS, "Set-Cookie": cookieSesion(token, Math.floor(TOKEN_TTL_MS / 1000)) });
@@ -442,7 +584,8 @@ function vistaVendedor(data, who, stores) {
       moneda: cfg.moneda, facturaInicio: cfg.facturaInicio, emisor: cfg.emisor,
       commissionRate: cfg.commissionRate,
       vendedores: (cfg.vendedores || []).map(v => v && v.id === vid ? v : { id: v.id, nombre: v.nombre, rate: 0 }),
-      idiomaEnV1: cfg.idiomaEnV1, clientesCaseV1: cfg.clientesCaseV1
+      idiomaEnV1: cfg.idiomaEnV1, clientesCaseV1: cfg.clientesCaseV1,
+      cuentasCobro: Array.isArray(cfg.cuentasCobro) ? cfg.cuentasCobro.map(c => ({ id: c.id, nombre: c.nombre, activa: c.activa })) : []   // v10
     },
     productos,
     // Compras: sólo lo que está en tránsito (la app lo muestra como "próximamente"), sin precios.
@@ -660,8 +803,74 @@ function firmaVenta(v) {
     l: (v.lineas || []).map(l => [l.productoId, Number(l.cantidad) || 0, Number(l.precio) || 0]),
     e: v.envio ? [v.envio.tipo || "", Number(v.envio.monto) || 0] : null,
     cc: (v.cargosCliente || []).map(c => [c.nota || "", Number(c.monto) || 0]),
-    mp: v.medioPago || "", rp: v.refPago || ""
+    mp: v.medioPago || "", rp: v.refPago || "", cb: v.cuentaCobro || ""
   });
+}
+/* v10 · Cuenta de cobro: se acepta sólo un id que exista en config.cuentasCobro;
+   el nombre lo pone el servidor (snapshot), no el pedido. */
+function cuentaCobroDe(m, nv) {
+  const id = txt(nv && nv.cuentaCobro, 64).trim();
+  const lista = (m && m.config && Array.isArray(m.config.cuentasCobro)) ? m.config.cuentasCobro : [];
+  const c = id ? lista.find(x => x && x.id === id) : null;
+  return c ? { cuentaCobro: c.id, cuentaCobroNombre: txt(c.nombre, 80) } : { cuentaCobro: "", cuentaCobroNombre: "" };
+}
+/* ============================================================
+   STOCK DEL GRUPO (Prince + Select · nov 2026) — sólo lectura
+   ------------------------------------------------------------
+   - GET /grupo/stock (servidor ↔ servidor): devuelve el stock de esta
+     app SIN costos ni precios. Exige el header X-Grupo-Key = GRUPO_KEY
+     (secreto compartido entre los dos Workers, 16+ caracteres).
+   - GET /grupo/consolidado (usuarios admin/editor logueados): junta el
+     stock propio con el de la otra app (GRUPO_PEER_URL) y lo devuelve.
+     El navegador nunca ve la clave ni habla con la otra app.
+   Si GRUPO_KEY o GRUPO_PEER_URL no están configurados, la otra app
+   figura "no conectada" y todo lo demás sigue igual.
+   ============================================================ */
+function grupoCodigos(p) {
+  const extra = Array.isArray(p && p.skusAsoc) ? p.skusAsoc.map(x => x && x.sku) : [];
+  return [p && p.sku, ...extra].map(s => String(s || "").trim()).filter(Boolean).slice(0, 20);
+}
+function grupoClaveOk(env, req) {
+  const k = String(env.GRUPO_KEY || ""), h = String(req.headers.get("X-Grupo-Key") || "");
+  if (k.length < 16 || h.length !== k.length) return false;
+  let d = 0; for (let i = 0; i < k.length; i++) d |= k.charCodeAt(i) ^ h.charCodeAt(i);
+  return d === 0;
+}
+async function grupoPeer(env) {
+  const base = String(env.GRUPO_PEER_URL || "").replace(/\/+$/, "");
+  if (!base || String(env.GRUPO_KEY || "").length < 16) return { app: "", error: "no-config" };
+  const ac = new AbortController(); const corte = setTimeout(() => ac.abort(), 8000);
+  try {
+    const r = await fetch(base + "/grupo/stock", { headers: { "X-Grupo-Key": env.GRUPO_KEY }, signal: ac.signal });
+    if (!r.ok) return { app: "", error: "http " + r.status };
+    const j = await r.json();
+    return j && j.ok ? j.data : { app: "", error: "respuesta inválida" };
+  } catch (e) { return { app: "", error: (e && e.name === "AbortError") ? "timeout" : "sin conexión" }; }
+  finally { clearTimeout(corte); }
+}
+
+/* Prince: un solo depósito vendible (suma de las sociedades); en tránsito = compras "in_transit". */
+async function grupoPropio(env) {
+  const space = String(env.CATALOG_SPACE || "main").slice(0, 64);
+  const row = await leerEstado(env, space);
+  let d = null; try { d = row ? JSON.parse(row.dataStr) : null; } catch (_) { d = null; }
+  const stores = storeIds(env);
+  const transito = {};
+  for (const c of ((d && d.compras) || [])) {
+    if (!c || c.status !== "in_transit") continue;
+    for (const l of (c.lineas || [])) if (l && l.productoId) transito[l.productoId] = (transito[l.productoId] || 0) + (Number(l.cantidad) || 0);
+  }
+  const nombre = String(env.GRUPO_NOMBRE || "Prince").slice(0, 40);
+  const productos = [];
+  for (const p of ((d && d.productos) || [])) {
+    if (!p || !p.id) continue;
+    const disp = stores.reduce((a, s) => a + (Number(p.stockPorTienda && p.stockPorTienda[s]) || 0), 0);
+    const tr = transito[p.id] || 0;
+    if (disp <= 0 && tr <= 0) continue;
+    productos.push({ codigos: grupoCodigos(p), sku: String(p.sku || ""), nombre: String(p.nombre || ""), juego: String(p.categoria || ""),
+                     idioma: String(p.idioma || ""), stock: { principal: Math.max(0, disp) }, transito: tr });
+  }
+  return { app: nombre, depositos: [{ id: "principal", nombre }], productos, updated_at: row ? row.updated_at : null };
 }
 function clienteLinea(c) { return c ? (c.empresa ? `${c.nombre} · ${c.empresa}` : c.nombre) : ""; }
 function vendedorDe(m, vid) {
@@ -753,6 +962,7 @@ function construirVenta(ctx, nv, pv) {
     envio: { tipo: envioTipo, monto: envioMonto },
     medioPago: txt(nv.medioPago, 60).trim(),
     refPago: txt(nv.refPago, 120).trim(),
+    ...cuentaCobroDe(m, nv),                         // v10: cuenta de destino (sólo si existe en la config)
     cargosCliente: cargos,
     costosExtra: pv ? (pv.costosExtra || []) : [],   // los costos de venta sólo los carga el admin
     vendedorId: who.vid || null,                     // SIEMPRE el del token, nunca el del pedido
@@ -787,6 +997,24 @@ function aplicarVenta(ctx, doc) {
   });
   doc.srvRev = ctx.newRev;
   m.ventas.push(doc);
+}
+
+/* v5: ¿alcanza el stock para esta venta? Cuenta como disponible lo que devolvería la versión
+   anterior de la misma venta (al editar). Devuelve el nombre del primer producto que no
+   alcanza, o "" si está todo bien. La app nunca deja stock negativo; el servidor tampoco
+   debe: antes sólo avisaba y aplicaba igual, así que dos vendedores vendiendo la última
+   unidad a la vez (o restaurar una venta vieja) dejaban el stock en negativo. */
+function faltanteStock(ctx, doc, pv) {
+  const { m, eng } = ctx;
+  const pedido = {}, previo = {};
+  (doc.lineas || []).forEach(l => { pedido[l.productoId] = (pedido[l.productoId] || 0) + (Number(l.cantidad) || 0); });
+  (pv ? (pv.lineas || []) : []).forEach(l => { previo[l.productoId] = (previo[l.productoId] || 0) + (Number(l.cantidad) || 0); });
+  for (const id of Object.keys(pedido)) {
+    const p = (m.productos || []).find(x => x.id === id); if (!p) continue;
+    const disp = eng.stockTotal(p) + (previo[id] || 0);
+    if (pedido[id] > disp + 1e-9) return { nombre: p.nombre, disp: r4(disp), pedido: r4(pedido[id]) };
+  }
+  return null;
 }
 
 function revertirVenta(ctx, v) {
@@ -858,6 +1086,13 @@ function rebaseVendedor(env, prev, next, baseRev, curRev, who) {
       ctx.papelera.push({ coleccion: "ventas", doc: nv, motivo: "rechazada: " + r.error.es });
       continue;
     }
+    const falta = faltanteStock(ctx, r.doc, pv || null);
+    if (falta) {
+      ctx.avisos.push({ es: `Venta ${nv.numero ? nv.numero + " " : ""}rechazada: no hay stock suficiente de ${falta.nombre} (hay ${falta.disp}, pediste ${falta.pedido}). Puede que otro la haya vendido recién.`,
+                        en: `Sale ${nv.numero ? nv.numero + " " : ""}rejected: not enough stock of ${falta.nombre} (${falta.disp} available, ${falta.pedido} requested). Someone may have just sold it.` });
+      ctx.papelera.push({ coleccion: "ventas", doc: nv, motivo: "rechazada: sin stock de " + falta.nombre });
+      continue;
+    }
     if (pv) revertirVenta(ctx, pv);
     aplicarVenta(ctx, r.doc);
     ctx.cambios.push((pv ? "~venta " : "+venta ") + r.doc.numero + " $" + r.doc.total);
@@ -884,6 +1119,32 @@ function rebaseAdmin(env, prev, next, baseRev, curRev, who) {
     aplicarVenta(ctx, doc);
     ctx.avisos.push({ es: `Se conservó la venta ${doc.numero} cargada por ${doc.vendedor || "un vendedor"} mientras tanto`, en: `Kept sale ${doc.numero} entered by ${doc.vendedor || "a seller"} in the meantime` });
     ctx.cambios.push("+venta (rescatada) " + doc.numero);
+  }
+  /* v5: antes sólo se rescataban las ventas NUEVAS. Si un vendedor EDITABA o BORRABA una
+     venta mientras tanto, "conservar mi versión" lo pisaba sin avisar (y el stock volvía al
+     estado viejo). Regla: una venta que el admin NO tocó en su copia conserva el srvRev que le
+     mandó el servidor (≤ baseRev); si la editó, la app la rearma sin srvRev. Sólo las que el
+     admin no tocó toman el cambio del servidor; si las tocaron los dos, gana el admin. */
+  const prevMap = new Map((prev.ventas || []).map(v => [v.id, v]));
+  const intacta = a => a && a.srvRev != null && Number(a.srvRev) <= baseRev;
+  for (const v of prev.ventas || []) {
+    if ((v.srvRev || 0) <= baseRev) continue;
+    const a = m.ventas.find(x => x.id === v.id);
+    if (!intacta(a) || firmaDoc(a) === firmaDoc(v)) continue;
+    if (!v.lineas || v.lineas.some(l => !m.productos.find(p => p.id === l.productoId))) continue;
+    revertirVenta(ctx, a);
+    const doc = structuredClone(v);
+    doc.lineas = doc.lineas.map(l => ({ productoId: l.productoId, sku: l.sku, nombre: l.nombre, cantidad: l.cantidad, precio: l.precio }));
+    aplicarVenta(ctx, doc);
+    ctx.avisos.push({ es: `Se tomó la versión de la venta ${doc.numero} que cambió ${doc.vendedor || "otro usuario"} mientras tanto`, en: `Took the version of sale ${doc.numero} changed by ${doc.vendedor || "another user"} in the meantime` });
+    ctx.cambios.push("~venta (rescatada) " + doc.numero);
+  }
+  for (const a of [...m.ventas]) {
+    if (!intacta(a) || prevMap.has(a.id)) continue;
+    // Existía cuando el admin bajó los datos y después se borró en el servidor (ya está en la papelera).
+    revertirVenta(ctx, a);
+    ctx.avisos.push({ es: `La venta ${a.numero || a.id} se había borrado mientras tanto: se respetó el borrado`, en: `Sale ${a.numero || a.id} had been deleted in the meantime: the deletion was kept` });
+    ctx.cambios.push("-venta (borrada mientras tanto) " + (a.numero || a.id));
   }
   return ctx;
 }
@@ -969,6 +1230,9 @@ function restaurarDoc(env, prev, curRev, who, coleccion, docIn) {
     doc.lineas = doc.lineas.map(l => ({ productoId: l.productoId, sku: l.sku, nombre: l.nombre, cantidad: Number(l.cantidad) || 0, precio: Number(l.precio) || 0 }));
     if (!doc.subtotal && doc.subtotal !== 0) doc.subtotal = r2(doc.lineas.reduce((a, l) => a + r2(l.cantidad * l.precio), 0));
     if (doc.total == null) doc.total = doc.subtotal;
+    const falta = faltanteStock(ctx, doc, null);   // v5: no restaurar una venta sin stock (dejaba negativo)
+    if (falta) return mal(`No se puede restaurar: no hay stock suficiente de ${falta.nombre} (hay ${falta.disp}, la venta lleva ${falta.pedido}).`,
+                          `Can't restore: not enough stock of ${falta.nombre} (${falta.disp} available, the sale needs ${falta.pedido}).`, 409);
     aplicarVenta(ctx, doc);                 // vuelve a descontar stock con FIFO
     desc = "venta " + (doc.numero || doc.id);
   } else if (coleccion === "compras") {
@@ -978,7 +1242,10 @@ function restaurarDoc(env, prev, curRev, who, coleccion, docIn) {
       for (const l of doc.lineas || []) {
         const p = m.productos.find(x => x.id === l.productoId);
         const landed = r2(l.costoTotal != null ? l.costoTotal : l.precio);
-        ctx.eng.fifoLayers(p, store).push({ id: uid(), fecha: new Date().toISOString(), cantidad: +l.cantidad, costoUnit: landed, ref: refTxt, refId: doc.id });
+        // v5: el lote vuelve con la fecha de la factura, no "ahora" (si no, una compra vieja
+        // restaurada pasaba al final de la cola FIFO y las ventas siguientes tomaban otro costo).
+        const fCapa = FECHA_RE.test(String(doc.fecha || "")) ? doc.fecha + "T12:00:00.000Z" : new Date().toISOString();
+        ctx.eng.fifoLayers(p, store).push({ id: uid(), fecha: fCapa, cantidad: +l.cantidad, costoUnit: landed, ref: refTxt, refId: doc.id });
         ctx.eng.mover(p, +l.cantidad, landed, "compra", doc.id, refTxt, store);
       }
     }
@@ -986,6 +1253,167 @@ function restaurarDoc(env, prev, curRev, who, coleccion, docIn) {
     desc = "compra " + (doc.numero || doc.id);
   }
   return { m, avisos: ctx.avisos, desc };
+}
+
+/* ============================================================
+   v6 · LECTURA DE FACTURAS CON IA (Gemini) — más rápida
+   ------------------------------------------------------------
+   Por qué tardaba: los Gemini Flash "piensan" antes de responder y
+   por defecto lo hacen en nivel MEDIO. Para copiar la tabla de una
+   factura no hace falta razonar: ese pensamiento era la mayor parte
+   de la espera (y además se cobra como salida).
+   · Pensamiento al mínimo que admite cada modelo (iaPensamiento).
+   · Esquema fijo de respuesta (responseSchema): Gemini no puede
+     devolver JSON roto. Antes, un JSON roto = leer TODO de nuevo
+     con el modelo siguiente (doble espera).
+   · Tope de tiempo por intento: si un modelo se cuelga, se pasa al
+     siguiente en vez de esperar sin fin.
+   · Si un modelo rechaza un parámetro (400), se reintenta UNA vez
+     sin ese parámetro en vez de saltar de modelo.
+   · Modelos configurables con la variable GEMINI_MODELS (lista
+     separada por comas) sin tocar código.
+   ============================================================ */
+const IA_MODELOS_DEF = ["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-2.5-flash"];   // v8: el más rápido primero
+const IA_TIMEOUT_MS = 30000;          // v8: tope por intento (antes 45 s)
+const IA_TOTAL_MS = 70000;            // v8: tope TOTAL de la lectura, sumando todos los modelos
+const IA_TRANSITORIOS = [429, 500, 502, 503, 504];
+const IA_PROMPT =
+  "You are reading a purchase invoice. Extract its data. " +
+  "'precio' = net unit price; 'cantidad' = qty; 'msrp' = suggested retail price if present, else 0; " +
+  "'sku' = code before the colon; 'flete' = freight/shipping charge (not inside lineas); " +
+  "'cargos' = sum of other non-product charges such as handling fees (not inside lineas); " +
+  "'impuestos' = tax total; 'total' = invoice grand total; unknown = 0 or \"\". " +
+  "'fecha' = the INVOICE date as YYYY-MM-DD. Numeric dates on these invoices are US format " +
+  "MM/DD/YYYY (07/01/2026 is July 1, 2026, never January 7). " +
+  "Copy every product line exactly as printed, in order. Do not invent lines.";
+const IA_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    numero: { type: "STRING" },
+    fecha: { type: "STRING" },
+    proveedor: { type: "STRING" },
+    moneda: { type: "STRING" },
+    flete: { type: "NUMBER" },
+    cargos: { type: "NUMBER" },
+    impuestos: { type: "NUMBER" },
+    total: { type: "NUMBER" },
+    lineas: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: {
+          sku: { type: "STRING" },
+          nombre: { type: "STRING" },
+          cantidad: { type: "NUMBER" },
+          precio: { type: "NUMBER" },
+          msrp: { type: "NUMBER" }
+        },
+        required: ["sku", "nombre", "cantidad", "precio"],
+        propertyOrdering: ["sku", "nombre", "cantidad", "precio", "msrp"]
+      }
+    }
+  },
+  required: ["lineas"],
+  propertyOrdering: ["numero", "fecha", "proveedor", "moneda", "lineas", "flete", "cargos", "impuestos", "total"]
+};
+
+function iaModelos(env) {
+  const l = String(env.GEMINI_MODELS || "").split(",").map(s => s.trim()).filter(Boolean);
+  return l.length ? l : IA_MODELOS_DEF;
+}
+/* Nivel de pensamiento más bajo que acepta cada familia (docs de Google, sep 2026):
+   3.7 / 3.8 Flash y los Pro: "low" (no admiten "minimal") · 3 / 3.5 / 3.6 Flash y Flash-Lite:
+   "minimal" · 2.5: presupuesto 0 (apagado). */
+function iaPensamiento(model) {
+  if (/^gemini-2\.5/.test(model)) return { thinkingBudget: 0 };
+  if (/flash-lite|^gemini-3(\.[56])?-flash/.test(model)) return { thinkingLevel: "minimal" };
+  return { thinkingLevel: "low" };
+}
+/* v8: ¿la lectura cierra contra el total de la factura? Sin total, no se puede verificar (se acepta). */
+function iaCuadre(data) {
+  const lineas = (Array.isArray(data && data.lineas) ? data.lineas : [])
+    .reduce((a, l) => a + (Number(l.cantidad) || 0) * (Number(l.precio) || 0), 0);
+  const suma = r2(lineas + (Number(data.flete) || 0) + (Number(data.cargos) || 0) + (Number(data.impuestos) || 0));
+  const total = r2(Number(data && data.total) || 0);
+  const tol = Math.max(0.05, total * 0.001);
+  const ok = !total || Math.abs(total - suma) <= tol || Math.abs(total - r2(lineas)) <= tol;
+  return { ok, suma, total, verificable: !!total };
+}
+async function iaLlamar(env, model, cuerpo, limiteMs) {
+  const ac = new AbortController();
+  const corte = setTimeout(() => ac.abort(), Math.max(1000, Math.min(IA_TIMEOUT_MS, limiteMs || IA_TIMEOUT_MS)));
+  try {
+    const res = await fetch("https://generativelanguage.googleapis.com/v1beta/models/" + encodeURIComponent(model) + ":generateContent", {
+      method: "POST", signal: ac.signal,
+      // La key va en un header: en la URL queda escrita en logs de proxies y errores.
+      headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_KEY },
+      body: JSON.stringify(cuerpo)
+    });
+    let j = null;
+    try { j = await res.json(); } catch (_) {}
+    return { ok: res.ok, status: res.status, j };
+  } catch (e) {
+    const timeout = e && e.name === "AbortError";
+    return { ok: false, status: 0, j: null, red: timeout ? "timeout" : ("network: " + String((e && e.message) || e)) };
+  } finally {
+    clearTimeout(corte);
+  }
+}
+async function leerFacturaIA(env, parteDoc) {
+  const t0 = Date.now();
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  let lastErr = "sin respuesta del modelo";
+  let respaldo = null;                              // mejor lectura que NO cuadró (por si ninguna cuadra)
+  for (const model of iaModelos(env)) {
+    if (Date.now() - t0 > IA_TOTAL_MS - 5000) { lastErr = "tiempo total agotado (" + Math.round((Date.now() - t0) / 1000) + " s)"; break; }
+    let pensamiento = iaPensamiento(model);
+    let esquema = true;
+    let reintentoTransitorio = false;
+    for (let intento = 1; intento <= 4; intento++) {
+      const gen = { temperature: 0, responseMimeType: "application/json" };
+      if (esquema) gen.responseSchema = IA_SCHEMA;
+      if (pensamiento) gen.thinkingConfig = pensamiento;
+      const tIntento = Date.now();
+      const r = await iaLlamar(env, model, {
+        contents: [{ parts: [{ text: IA_PROMPT }, parteDoc] }],
+        generationConfig: gen
+      }, IA_TOTAL_MS - (Date.now() - t0));
+      if (!r.ok) console.log(`parse-invoice intento · ${model} · ${Date.now() - tIntento} ms · ${r.red || ("HTTP " + r.status + " " + ((r.j && r.j.error && r.j.error.message) || "")).slice(0, 200)}`);
+      if (r.ok) {
+        let text = "";
+        try { text = r.j.candidates[0].content.parts.filter(p => !p.thought).map(p => p.text || "").join(""); } catch (_) { text = ""; }
+        try {
+          const data = JSON.parse(text.replace(/[`]{3}json|[`]{3}/g, "").trim());
+          const u = (r.j && r.j.usageMetadata) || {};
+          const ms = Date.now() - t0;
+          const c = iaCuadre(data);
+          console.log(`parse-invoice ${c.ok ? "ok" : "NO CUADRA"} · ${model} · ${parteDoc.text ? "texto" : "pdf"} · ${ms} ms · pensamiento ${u.thoughtsTokenCount || 0} tok · salida ${u.candidatesTokenCount || 0} tok · ${(data.lineas || []).length} líneas · ${c.suma} vs ${c.total}`);
+          if (c.ok) return { ok: true, data, model, ms, cuadra: c.verificable ? true : null, suma: c.suma, total: c.total };
+          // Si ninguno cuadra, se devuelve la lectura que quedó MÁS CERCA del total.
+          if (!respaldo || Math.abs(c.total - c.suma) < Math.abs(respaldo.total - respaldo.suma)) {
+            respaldo = { ok: true, data, model, ms, cuadra: false, suma: c.suma, total: c.total };
+          }
+          lastErr = "no cuadra (" + model + ")";
+          break;                                     // probamos el modelo siguiente
+        } catch (_) { lastErr = "could not parse model output (" + model + ")"; break; }
+      }
+      if (r.red) {                                   // timeout o corte de red
+        lastErr = r.red + " (" + model + ")";
+        if (r.red === "timeout" || reintentoTransitorio) break;
+        reintentoTransitorio = true; await sleep(600); continue;
+      }
+      const msg = (r.j && r.j.error && r.j.error.message) || ("HTTP " + r.status);
+      lastErr = msg + " (" + model + ")";
+      // El modelo no admite un parámetro: se reintenta el MISMO modelo sin ese parámetro.
+      if (r.status === 400 && pensamiento && /think/i.test(msg)) { pensamiento = null; continue; }
+      if (r.status === 400 && esquema && /schema/i.test(msg)) { esquema = false; continue; }
+      if (IA_TRANSITORIOS.includes(r.status) && !reintentoTransitorio) { reintentoTransitorio = true; await sleep(700); continue; }
+      break;                                         // 404 (modelo inexistente) u otro: al siguiente
+    }
+  }
+  if (respaldo) { respaldo.ms = Date.now() - t0; return respaldo; }
+  console.log(`parse-invoice FALLÓ · ${Date.now() - t0} ms · ${lastErr}`);
+  return { ok: false, error: lastErr };
 }
 
 /* ============================================================
@@ -1013,6 +1441,28 @@ async function leerEstado(env, space) {
   let dataStr = r.data;
   if (dataStr == null && r.data_gz != null) dataStr = await gunzipTexto(r.data_gz);
   return { dataStr, rev: Number(r.rev), updated_at: r.updated_at };
+}
+/* v9: una versión anterior del estado (o null si ya no está en el historial). */
+async function leerHist(env, space, rev) {
+  try {
+    const r = await env.DB.prepare("SELECT data, data_gz FROM estado_hist WHERE space = ? AND rev = ?").bind(space, rev).first();
+    if (!r) return null;
+    let str = r.data;
+    if (str == null && r.data_gz != null) str = await gunzipTexto(r.data_gz);
+    return str ? JSON.parse(str) : null;
+  } catch (e) { console.error("leerHist:", e && e.message); return null; }
+}
+/* v9: si la versión actual todavía no está en el historial (p. ej. es de antes de esta
+   versión del Worker), la agrega. Así el primer guardado "sobre versión vieja" ya combina. */
+async function sembrarHist(env, space, row) {
+  try {
+    const ya = await env.DB.prepare("SELECT 1 AS x FROM estado_hist WHERE space = ? AND rev = ?").bind(space, row.rev).first();
+    if (ya) return;
+    let plano = row.dataStr, gz = null;
+    if (row.dataStr.length >= gzDesde(env)) { gz = await gzip(row.dataStr); plano = null; }
+    await env.DB.prepare("INSERT OR IGNORE INTO estado_hist (space, rev, data, data_gz, ts) VALUES (?, ?, ?, ?, ?)")
+      .bind(space, row.rev, plano, gz, row.updated_at || new Date().toISOString()).run();
+  } catch (e) { console.error("sembrarHist:", e && e.message); }
 }
 function gzDesde(env) { const n = Number(env.ESTADO_GZ_DESDE); return Number.isFinite(n) && n > 0 ? n : GZ_DESDE_DEF; }
 
@@ -1077,6 +1527,11 @@ async function guardarEstado(env, { space, dataStr, curRev, existe, who, meta, a
     ).bind(now, space, newRev, who.u, who.role, p.coleccion, String((p.doc && p.doc.id) || ""), String(p.motivo || "").slice(0, 300),
            p.raw || JSON.stringify(p.doc), space, newRev));
   }
+  // v9: la versión nueva también queda en el historial (sólo si este UPDATE ganó)
+  stmts.push(env.DB.prepare(
+    "INSERT OR REPLACE INTO estado_hist (space, rev, data, data_gz, ts) SELECT ?, ?, ?, ?, ? WHERE (SELECT rev FROM estado WHERE space = ?) = ?"
+  ).bind(space, newRev, plano, gz, now, space, newRev));
+  stmts.push(env.DB.prepare("DELETE FROM estado_hist WHERE space = ? AND rev < ?").bind(space, newRev - HIST_MAX));
   stmts.push(await stmtAuditoria(env, { space, rev: newRev, actor: who.u, role: who.role, ...meta, accion, resumen, sha256: sha }, cond));
   const res = await env.DB.batch(stmts);
   const ok = !!(res[0] && res[0].meta && res[0].meta.changes === 1);
@@ -1121,6 +1576,253 @@ async function snapshotDiario(env) {
 }
 
 /* ============================================================
+   v131 · COMBINACIÓN DE 3 VÍAS ENTRE ADMINS (merge)
+   ------------------------------------------------------------
+   ESTE BLOQUE ESTÁ COPIADO IGUAL EN worker.js Y EN js/01-core.js.
+   Si lo cambiás en uno, cambialo en el otro.
+
+   base   = la versión del servidor sobre la que trabajó este admin
+   mio    = lo que manda este admin (base + sus cambios)
+   server = la versión actual del servidor (base + cambios de otros)
+
+   Regla: lo que cambió sólo uno, queda. Si los dos cambiaron EXACTAMENTE
+   lo mismo (la misma venta, la misma compra, el mismo campo), es un
+   conflicto real y no se combina nada (el que llega después elige).
+
+   El stock de un producto se combina por DIFERENCIAS: si los dos
+   vendieron del mismo producto, se restan las dos ventas del mismo lote
+   FIFO. Sólo es conflicto si entre los dos se pasan de ese lote.
+   ============================================================ */
+const MRG_DOC_ATOMICO = new Set(["ventas", "compras", "movimientos", "solicitudes"]);  // se comparan enteros
+const MRG_PROD_STOCK = ["stockPorTienda", "lotes", "stock"];                            // se combinan por diferencias
+const MRG_PROD_BLANDOS = new Set(["precioVenta", "precioVentaPorTienda", "ultimoCosto", "costoNeto", "costoHandling", "costoFlete"]); // último que se tocó gana
+const MRG_EPS = 0.00001;
+
+function mrgEsObj(x) { return x != null && typeof x === "object" && !Array.isArray(x); }
+/* JSON canónico: claves ordenadas y sin srvRev (marca interna del servidor). */
+function mrgCanon(x) {
+  if (x === undefined) return "u";
+  if (x === null || typeof x !== "object") return JSON.stringify(x);
+  if (Array.isArray(x)) return "[" + x.map(mrgCanon).join(",") + "]";
+  return "{" + Object.keys(x).filter(k => k !== "srvRev" && x[k] !== undefined).sort()
+    .map(k => JSON.stringify(k) + ":" + mrgCanon(x[k])).join(",") + "}";
+}
+function mrgIgual(a, b) { return a === b || mrgCanon(a) === mrgCanon(b); }
+function mrgR4(n) { return Math.round((Number(n) || 0) * 10000) / 10000; }
+function mrgConIds(a) { return Array.isArray(a) && a.every(d => mrgEsObj(d) && d.id != null && d.id !== ""); }
+function mrgMapa(a) { const m = new Map(); (a || []).forEach(d => m.set(String(d.id), d)); return m; }
+
+/* Nombre legible de un documento para los avisos. */
+function mrgMay(o) { return { es: o.es.charAt(0).toUpperCase() + o.es.slice(1), en: o.en.charAt(0).toUpperCase() + o.en.slice(1) }; }
+function mrgEtiqueta(col, d) {
+  const x = d || {};
+  if (col === "ventas") return { es: "la venta " + (x.numero || x.id), en: "sale " + (x.numero || x.id) };
+  if (col === "compras") return { es: "la compra " + (x.numero || x.contraparte || x.id), en: "purchase " + (x.numero || x.contraparte || x.id) };
+  if (col === "productos") return { es: "el producto " + (x.nombre || x.sku || x.id), en: "product " + (x.nombre || x.sku || x.id) };
+  if (col === "clientes") return { es: "el cliente " + (x.nombre || x.id), en: "customer " + (x.nombre || x.id) };
+  if (col === "movimientos") return { es: "un movimiento de " + (x.nombre || x.sku || "stock"), en: "a stock movement of " + (x.nombre || x.sku || "stock") };
+  return { es: col + " " + (x.nombre || x.id || ""), en: col + " " + (x.nombre || x.id || "") };
+}
+
+function combinar3(base, mio, server, opts) {
+  opts = opts || {};
+  const STORES = opts.stores || ["akira", "silver"];
+  const ctx = { conflictos: [], avisos: [], cambios: [] };
+  const choca = (es, en) => { if (ctx.conflictos.length < 20) ctx.conflictos.push({ es, en }); };
+
+  /* Movimientos de kardex que agregué / saqué yo, por producto. Cada operación de stock
+     deja movimientos con id único: así se distingue "dos ventas iguales" (se suman) de
+     "mi cambio ya está en el servidor" (p. ej. un reintento: no se vuelve a aplicar). */
+  const idsMov = d => new Set(((d && d.movimientos) || []).map(x => String(x && x.id)));
+  const IB = idsMov(base), IM = idsMov(mio), IT = idsMov(server);
+  const movPorProd = {};
+  const anotar = (pid, tipo, id) => { const k = String(pid); if (!movPorProd[k]) movPorProd[k] = { add: [], del: [] }; movPorProd[k][tipo].push(id); };
+  ((mio && mio.movimientos) || []).forEach(x => { if (x && !IB.has(String(x.id))) anotar(x.productoId, "add", String(x.id)); });
+  ((base && base.movimientos) || []).forEach(x => { if (x && !IM.has(String(x.id))) anotar(x.productoId, "del", String(x.id)); });
+
+  /* --- genérico: objetos, arrays y valores --- */
+  function m3(b, m, t, path, blando) {
+    if (mrgIgual(m, b)) return t;            // yo no lo toqué
+    if (mrgIgual(t, b)) return m;            // el otro no lo tocó
+    // los dos hicimos lo mismo (salvo productos: dos ventas iguales del mismo producto
+    // dejan el producto idéntico en los dos lados, pero son DOS ventas -> se decide en m3Producto)
+    if (!(path.length === 1 && path[0] === "productos") && mrgIgual(m, t)) return t;
+    if (mrgEsObj(m) && mrgEsObj(t) && (b === undefined || mrgEsObj(b))) return m3Obj(b || {}, m, t, path, blando);
+    if (Array.isArray(m) && Array.isArray(t) && (b === undefined || Array.isArray(b))) {
+      const bb = b || [];
+      if (mrgConIds(m) && mrgConIds(t) && mrgConIds(bb)) return m3Ids(bb, m, t, path, path.join("."), blando);
+      // listas sin ids (p. ej. registros): si las dos sólo AGREGARON al final, se suman
+      if (bb.every((x, i) => mrgIgual(x, m[i]) && mrgIgual(x, t[i]))) return t.concat(m.slice(bb.length));
+    }
+    if (blando) return t;
+    choca(`"${path.join(" › ")}" lo cambiaron los dos`, `"${path.join(" › ")}" was changed by both`);
+    return t;
+  }
+  function m3Obj(b, m, t, path, blando) {
+    const out = {};
+    const claves = new Set([...Object.keys(t), ...Object.keys(m), ...Object.keys(b)]);
+    for (const k of claves) {
+      if (k === "srvRev") { if (t.srvRev !== undefined) out.srvRev = t.srvRev; continue; }
+      const v = m3(b[k], m[k], t[k], path.concat(k), blando || (path.length === 0 && k === "stockSnaps"));
+      if (v !== undefined) out[k] = v;
+    }
+    return out;
+  }
+
+  /* --- colecciones con id (ventas, compras, productos, clientes, vendedores…) --- */
+  function m3Ids(b, m, t, path, col, blando) {
+    const B = mrgMapa(b), M = mrgMapa(m), T = mrgMapa(t);
+    const out = [];
+    for (const td of t) {
+      const id = String(td.id), bd = B.get(id), md = M.get(id);
+      if (!bd) {                                         // nuevo del otro
+        if (md && !mrgIgual(md, td) && !blando) choca(`${mrgMay(mrgEtiqueta(col, td)).es}: se creó dos veces distinto`, `${mrgMay(mrgEtiqueta(col, td)).en} was created twice`);
+        out.push(td); continue;
+      }
+      if (!md) {                                         // yo lo borré
+        if (mrgIgual(td, bd)) { ctx.cambios.push("-" + col + " " + id); continue; }
+        if (!blando) choca(`Borraste ${mrgEtiqueta(col, td).es}, pero otro usuario la modificó al mismo tiempo`, `You deleted ${mrgEtiqueta(col, td).en}, but another user changed it`);
+        out.push(td); continue;
+      }
+      out.push(m3Doc(col, bd, md, td, path.concat(id), blando));
+    }
+    for (const md of m) {                                // nuevos míos
+      const id = String(md.id);
+      if (B.has(id) || T.has(id)) continue;
+      out.push(md); ctx.cambios.push("+" + col + " " + id);
+    }
+    for (const [id, bd] of B) {                          // el otro lo borró y yo lo edité
+      if (T.has(id) || !M.has(id)) continue;
+      if (!mrgIgual(M.get(id), bd) && !blando) choca(`Modificaste ${mrgEtiqueta(col, bd).es}, pero otro usuario la borró al mismo tiempo`, `You changed ${mrgEtiqueta(col, bd).en}, but another user deleted it`);
+    }
+    return out;
+  }
+  function m3Doc(col, b, m, t, path, blando) {
+    if (mrgIgual(m, b)) return t;
+    if (mrgIgual(t, b)) return m;
+    if (col !== "productos" && mrgIgual(m, t)) return t;
+    if (col === "productos") return m3Producto(b, m, t, path);
+    if (MRG_DOC_ATOMICO.has(col)) {
+      if (!blando) choca(`${mrgMay(mrgEtiqueta(col, t)).es}: la modificaron los dos al mismo tiempo`, `${mrgMay(mrgEtiqueta(col, t)).en} was changed by both at the same time`);
+      return t;
+    }
+    return m3Obj(b, m, t, path, blando);                 // clientes, vendedores, etc.: campo por campo
+  }
+
+  /* --- productos: datos campo por campo + stock por diferencias --- */
+  function m3Producto(b, m, t, path) {
+    const out = {};
+    const claves = new Set([...Object.keys(t), ...Object.keys(m), ...Object.keys(b)]);
+    for (const k of claves) {
+      if (MRG_PROD_STOCK.includes(k)) continue;
+      if (k === "srvRev") { if (t.srvRev !== undefined) out.srvRev = t.srvRev; continue; }
+      let v;
+      if (MRG_PROD_BLANDOS.has(k)) v = mrgIgual(m[k], b[k]) ? t[k] : m[k];
+      else {
+        const antes = ctx.conflictos.length;
+        v = m3(b[k], m[k], t[k], path.concat(k), false);
+        if (ctx.conflictos.length > antes) {             // mensaje más claro que el genérico
+          ctx.conflictos.length = antes;
+          choca(`${mrgMay(mrgEtiqueta("productos", t)).es}: los dos cambiaron "${k}"`, `${mrgMay(mrgEtiqueta("productos", t)).en}: both changed "${k}"`);
+        }
+      }
+      if (v !== undefined) out[k] = v;
+    }
+    const sb = { s: b.stockPorTienda || {}, l: b.lotes || {} };
+    const sm = { s: m.stockPorTienda || {}, l: m.lotes || {} };
+    const st = { s: t.stockPorTienda || {}, l: t.lotes || {} };
+    let stock;
+    if (mrgIgual(sm, sb)) stock = st;                    // yo no toqué el stock
+    else if (mrgIgual(st, sb)) stock = sm;               // el otro no lo tocó
+    else {
+      const mv = movPorProd[String(t.id)] || { add: [], del: [] };
+      if (!mv.add.length && !mv.del.length) stock = mrgIgual(sm, st) ? st : m3Stock(sb, sm, st, t);
+      else if (mv.add.every(id => IT.has(id)) && mv.del.every(id => !IT.has(id))) stock = st;          // lo mío ya está en el servidor
+      else if (mv.add.every(id => !IT.has(id)) && mv.del.every(id => IT.has(id))) stock = m3Stock(sb, sm, st, t);   // operaciones distintas: se suman
+      else { choca(`${mrgMay(mrgEtiqueta("productos", t)).es}: los dos movieron el mismo stock al mismo tiempo`, `${mrgMay(mrgEtiqueta("productos", t)).en}: both moved the same stock at the same time`); stock = st; }
+    }
+    out.stockPorTienda = JSON.parse(JSON.stringify(stock.s));
+    out.lotes = JSON.parse(JSON.stringify(stock.l));
+    out.stock = mrgR4(STORES.reduce((a, s) => a + (Number(out.stockPorTienda[s]) || 0), 0));
+    return out;
+  }
+  function m3Stock(b, m, t, prod) {
+    const nombre = mrgMay(mrgEtiqueta("productos", prod));
+    const falla = () => { choca(`${nombre.es}: entre los dos se vendió/movió más de lo que había`, `${nombre.en}: together you sold/moved more than was available`); return t; };
+    // 1) unidades por sociedad: lo del otro + mi diferencia
+    const s = {};
+    for (const k of new Set([...Object.keys(t.s), ...Object.keys(m.s), ...Object.keys(b.s)])) {
+      const tv = Number(t.s[k]) || 0, mv = Number(m.s[k]) || 0, bv = Number(b.s[k]) || 0;
+      const v = mrgR4(tv + (mv - bv));
+      if (v < -MRG_EPS && tv >= -MRG_EPS && mv >= -MRG_EPS) return falla();
+      s[k] = v;
+    }
+    // 2) lotes FIFO, capa por capa (cada capa tiene su id)
+    const l = {};
+    for (const k of new Set([...Object.keys(t.l), ...Object.keys(m.l), ...Object.keys(b.l)])) {
+      const bl = b.l[k] || [], ml = m.l[k] || [], tl = t.l[k] || [];
+      if (!mrgConIds(bl) || !mrgConIds(ml) || !mrgConIds(tl)) return falla();
+      if (mrgIgual(ml, bl)) { l[k] = tl; continue; }
+      if (mrgIgual(tl, bl)) { l[k] = ml; continue; }
+      const B = mrgMapa(bl), M = mrgMapa(ml), T = mrgMapa(tl);
+      const res = [];
+      for (const tc of tl) {
+        const id = String(tc.id), bc = B.get(id);
+        if (!bc) { res.push(tc); continue; }               // capa nueva del otro
+        const mc = M.get(id);
+        const dq = (mc ? Number(mc.cantidad) || 0 : 0) - (Number(bc.cantidad) || 0);
+        if (mc) {                                          // fuera de la cantidad, las capas no se editan
+          const { cantidad: _a, ...restoM } = mc, { cantidad: _b, ...restoB } = bc;
+          if (!mrgIgual(restoM, restoB)) return falla();
+        }
+        const q = mrgR4((Number(tc.cantidad) || 0) + dq);
+        if (q < -MRG_EPS) return falla();                  // los dos consumieron la misma capa y no alcanzaba
+        if (q > MRG_EPS) res.push({ ...tc, cantidad: q });
+      }
+      for (const [id, bc] of B) {                          // capas que el otro ya agotó
+        if (T.has(id)) continue;
+        const mc = M.get(id);
+        const dq = (mc ? Number(mc.cantidad) || 0 : 0) - (Number(bc.cantidad) || 0);
+        if (dq < -MRG_EPS || dq > MRG_EPS) return falla();
+      }
+      // capas nuevas mías (compras, devoluciones): adelante si yo las puse adelante
+      const nuevas = ml.filter(c => !B.has(String(c.id)) && !T.has(String(c.id)));
+      const iPrimeraVieja = ml.findIndex(c => B.has(String(c.id)));
+      const adelante = nuevas.filter(c => iPrimeraVieja >= 0 && ml.indexOf(c) < iPrimeraVieja);
+      const atras = nuevas.filter(c => !adelante.includes(c));
+      l[k] = adelante.concat(res, atras);
+    }
+    return { s, l };
+  }
+
+  const data = m3Obj(base || {}, mio || {}, server || {}, [], false);
+
+  /* --- números de factura repetidos: renumera la venta nueva mía --- */
+  if (!ctx.conflictos.length && Array.isArray(data.ventas)) {
+    const Bv = new Set((base && base.ventas || []).map(v => String(v.id)));
+    const Tv = new Set((server && server.ventas || []).map(v => String(v.id)));
+    const inicio = parseInt(data.config && data.config.facturaInicio, 10) || 101;
+    const num = v => parseInt(String(v.numero || "").replace(/[^\d]/g, ""), 10);
+    const usado = (n, id) => data.ventas.some(x => String(x.id) !== id && String(x.numero || "").trim().toLowerCase() === String(n || "").trim().toLowerCase());
+    for (const v of data.ventas) {
+      const id = String(v.id);
+      if (Bv.has(id) || Tv.has(id) || !v.numero || !usado(v.numero, id)) continue;
+      let max = inicio - 1;
+      data.ventas.forEach(x => { const n = num(x); if (!isNaN(n) && n > max) max = n; });
+      const antes = String(v.numero), nuevo = String(max + 1);
+      v.numero = nuevo;
+      (data.movimientos || []).forEach(mv => {
+        if (mv.refId === v.id && typeof mv.ref === "string") mv.ref = mv.ref.replace(antes, nuevo);
+      });
+      ctx.avisos.push({ es: `Otro usuario usó el número de factura ${antes} al mismo tiempo: tu venta quedó como ${nuevo}`,
+                        en: `Another user took invoice number ${antes} at the same time: your sale is now ${nuevo}` });
+    }
+  }
+  return { data, conflictos: ctx.conflictos, avisos: ctx.avisos, cambios: ctx.cambios };
+}
+/* ===================== fin bloque v131 ===================== */
+
+/* ============================================================
    ROUTER
    ============================================================ */
 export default {
@@ -1138,11 +1840,18 @@ export default {
 
       // ---------- HEALTH (sin token) ----------
       if (path === "" || path === "/health") {
-        return json({ ok: true, app: APP_NAME, v: 4, ts: new Date().toISOString() }, 200, CORS);
+        return json({ ok: true, app: APP_NAME, v: 10, ts: new Date().toISOString() }, 200, CORS);
       }
 
       if (!env.DB) return json({ error: "config: missing D1 binding 'DB'" }, 500, CORS);
       await ensureSchema(env);
+
+      // ---------- STOCK DEL GRUPO · servidor ↔ servidor (clave compartida, sin costos) ----------
+      if (path === "/grupo/stock") {
+        if (req.method !== "GET") return json({ error: "use GET" }, 405, CORS);
+        if (!grupoClaveOk(env, req)) return json({ error: "forbidden" }, 403, CORS);
+        return json({ ok: true, data: await grupoPropio(env) }, 200, CORS);
+      }
 
       // ---------- CATÁLOGO PÚBLICO (sin token, solo lectura, whitelist) ----------
       if (path === "/public/catalog") {
@@ -1269,7 +1978,8 @@ export default {
         const role = normRole(row.role);
         return emitirSesion(env, CORS, {
           user: row.user, role, name: row.name || row.user, tv: Number(row.token_version || 0),
-          vendedorId: role === "seller" ? String(row.vendedor_id || row.user).trim().toLowerCase() : ""
+          vendedorId: role === "seller" ? String(row.vendedor_id || row.user).trim().toLowerCase() : "",
+          editaOtros: role === "editor" && !!Number(row.edita_otros || 0)
         }, ahora);
       }
 
@@ -1295,6 +2005,14 @@ export default {
       if (!who) return json({ error: "not authorized" }, 401, CORS);
       const role = who.role;
       const meta = reqMeta(req);
+
+      // ---------- STOCK DEL GRUPO · vista consolidada (admin / editor) ----------
+      if (path === "/grupo/consolidado") {
+        if (req.method !== "GET") return json({ error: "use GET" }, 405, CORS);
+        if (role !== "admin" && role !== "editor") return json({ error: "forbidden" }, 403, CORS);
+        const [propio, otro] = await Promise.all([grupoPropio(env), grupoPeer(env)]);
+        return json({ ok: true, apps: [propio, otro] }, 200, CORS);
+      }
 
       // ---------- v4 · 2FA DEL PROPIO USUARIO ----------
       if (path === "/2fa" || path.startsWith("/2fa/")) {
@@ -1365,12 +2083,12 @@ export default {
 
         if (req.method === "GET") {
           const { results } = await env.DB.prepare(
-            "SELECT user, role, vendedor_id, cliente_id, name, created_at, totp_on FROM usuarios ORDER BY user"
+            "SELECT user, role, vendedor_id, cliente_id, name, created_at, totp_on, edita_otros FROM usuarios ORDER BY user"
           ).all();
           const users = (results || []).map(r => ({
             user: r.user, role: r.role, vendedorId: r.vendedor_id || "",
             clienteId: r.cliente_id || "", name: r.name || "", createdAt: r.created_at || "",
-            totp: !!r.totp_on
+            totp: !!r.totp_on, editaOtros: normRole(r.role) === "editor" && !!Number(r.edita_otros || 0)
           }));
           return json({ ok: true, users }, 200, CORS);
         }
@@ -1390,7 +2108,7 @@ export default {
             return json({ ok: true, user: u }, 200, CORS);
           }
           const existing = await env.DB.prepare(
-            "SELECT user, pass_hash, salt, role, vendedor_id, created_at, token_version FROM usuarios WHERE user = ?"
+            "SELECT user, pass_hash, salt, role, vendedor_id, created_at, token_version, edita_otros FROM usuarios WHERE user = ?"
           ).bind(u).first();
           if (!existing && !(b && b.pass)) return json({ error: "new user needs a password" }, 400, CORS);
           if (b && b.pass && String(b.pass).length < MIN_PASS) {
@@ -1407,18 +2125,21 @@ export default {
           const createdAt = existing ? (existing.created_at || new Date().toISOString()) : new Date().toISOString();
           // Cambió contraseña, rol o vendedor (o se pidió "cerrar sesiones") => se invalidan sus tokens.
           let tv = existing ? Number(existing.token_version || 0) : 0;
-          const revocar = existing && ((b && b.pass) || existing.role !== r || (existing.vendedor_id || "") !== vendedorId || (b && b.revocar));
+          // v11: permiso "editar lo de otros" (sólo perfil Editor). Si no viene en el pedido, se conserva.
+          const eo = r !== "editor" ? 0 : ((b && b.editaOtros !== undefined) ? (b.editaOtros ? 1 : 0) : Number((existing && existing.edita_otros) || 0));
+          const revocar = existing && ((b && b.pass) || existing.role !== r || (existing.vendedor_id || "") !== vendedorId || (b && b.revocar)
+                          || Number(existing.edita_otros || 0) !== eo);
           if (revocar) tv += 1;
 
           await env.DB.prepare(
-            "INSERT INTO usuarios (user, pass_hash, salt, role, vendedor_id, cliente_id, name, created_at, token_version) " +
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+            "INSERT INTO usuarios (user, pass_hash, salt, role, vendedor_id, cliente_id, name, created_at, token_version, edita_otros) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
             "ON CONFLICT(user) DO UPDATE SET pass_hash=excluded.pass_hash, salt=excluded.salt, role=excluded.role, " +
-            "vendedor_id=excluded.vendedor_id, cliente_id=excluded.cliente_id, name=excluded.name, token_version=excluded.token_version"
-          ).bind(u, hash, salt, r, vendedorId, "", name, createdAt, tv).run();
+            "vendedor_id=excluded.vendedor_id, cliente_id=excluded.cliente_id, name=excluded.name, token_version=excluded.token_version, edita_otros=excluded.edita_otros"
+          ).bind(u, hash, salt, r, vendedorId, "", name, createdAt, tv, eo).run();
 
           await auditar(env, { actor: who.u, role, ...meta, accion: existing ? "usuario-editado" : "usuario-creado",
-            resumen: `${u} (${r})${revocar ? " · sesiones cerradas" : ""}` });
+            resumen: `${u} (${r})${eo ? " · edita lo de otros" : ""}${revocar ? " · sesiones cerradas" : ""}` });
           return json({ ok: true, user: u }, 200, CORS);
         }
 
@@ -1496,69 +2217,32 @@ export default {
         return json({ error: "busy", es: "El servidor está ocupado, reintentá en unos segundos.", en: "Server busy, retry in a few seconds." }, 503, CORS);
       }
 
-      // ---------- PARSE INVOICE (sólo admin) ----------
+      // ---------- PARSE INVOICE (sólo admin) · v6: lógica en leerFacturaIA() ----------
       if (path === "/parse-invoice") {
         if (req.method !== "POST") return json({ error: "use POST" }, 405, CORS);
-        if (role !== "admin") return json({ ok: false, error: "forbidden" }, 403, CORS);
+        if (role !== "admin" && role !== "editor") return json({ ok: false, error: "forbidden" }, 403, CORS);   // v10: el editor carga compras
         if (!env.GEMINI_KEY) return json({ ok: false, error: "config: missing GEMINI_KEY" }, 500, CORS);
         let b;
         try { b = await req.json(); } catch { return json({ ok: false, error: "invalid JSON" }, 400, CORS); }
+        // v7: la app puede mandar el TEXTO ya extraído del PDF (más rápido) o el PDF entero.
+        const texto = typeof (b && b.texto) === "string" ? b.texto.slice(0, 60000).trim() : "";
         const pdf = b && b.pdf;
         const mime = (b && b.mime) || "application/pdf";
-        if (!pdf) return json({ ok: false, error: "missing 'pdf'" }, 400, CORS);
-        if (typeof pdf !== "string" || pdf.length > 14_000_000) {
-          return err(413, CORS, "file too large", "El archivo es demasiado grande (máx. ~10 MB).", "File too large (max ~10 MB).");
-        }
-        if (!["application/pdf", "image/png", "image/jpeg", "image/webp"].includes(mime)) {
-          return err(400, CORS, "unsupported file", "Tipo de archivo no soportado.", "Unsupported file type.");
-        }
-
-        const MODELS = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-2.5-flash"];
-        const prompt =
-          "You are reading a purchase invoice. Return ONLY a JSON object, no markdown, " +
-          "with this shape: {\"numero\":\"\",\"fecha\":\"\",\"proveedor\":\"\",\"moneda\":\"\",\"flete\":0," +
-          "\"lineas\":[{\"sku\":\"\",\"nombre\":\"\",\"cantidad\":0,\"precio\":0,\"msrp\":0}]}. " +
-          "'precio' = net unit price; 'cantidad' = qty; 'sku' = code before the colon; " +
-          "'flete' = sum of freight/handling (not inside lineas); unknown = 0 or \"\". " +
-          "'fecha' = the INVOICE date as YYYY-MM-DD. Numeric dates on these invoices are US format " +
-          "MM/DD/YYYY (07/01/2026 is July 1, 2026, never January 7).";
-
-        const gReq = {
-          contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mime, data: pdf } }] }],
-          generationConfig: { temperature: 0, response_mime_type: "application/json" }
-        };
-        const TRANSIENT = [429, 500, 502, 503, 504];
-        const MAX_INTENTOS = 2;
-        const sleep = ms => new Promise(r => setTimeout(r, ms));
-        let lastErr = "sin respuesta del modelo";
-
-        for (const model of MODELS) {
-          const gUrl = "https://generativelanguage.googleapis.com/v1beta/models/" +
-                       model + ":generateContent?key=" + encodeURIComponent(env.GEMINI_KEY);
-          for (let intento = 1; intento <= MAX_INTENTOS; intento++) {
-            let gRes, gJson;
-            try {
-              gRes = await fetch(gUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(gReq) });
-              gJson = await gRes.json();
-            } catch (e) {
-              lastErr = "network: " + String(e && e.message || e);
-              if (intento < MAX_INTENTOS) await sleep(intento * 700);
-              continue;
-            }
-            if (gRes.ok) {
-              let text = "";
-              try { text = gJson.candidates[0].content.parts.map(p => p.text || "").join(""); } catch { text = ""; }
-              try {
-                const data = JSON.parse(text.replace(/[`]{3}json|[`]{3}/g, "").trim());
-                return json({ ok: true, data, model }, 200, CORS);
-              } catch (e) { lastErr = "could not parse model output (" + model + ")"; break; }
-            }
-            lastErr = (gJson && gJson.error && gJson.error.message) || ("HTTP " + gRes.status);
-            if (TRANSIENT.includes(gRes.status)) { if (intento < MAX_INTENTOS) await sleep(intento * 700); continue; }
-            break;
+        if (!texto && !pdf) return json({ ok: false, error: "missing 'pdf'" }, 400, CORS);
+        if (!texto) {
+          if (typeof pdf !== "string" || pdf.length > 14_000_000) {
+            return err(413, CORS, "file too large", "El archivo es demasiado grande (máx. ~10 MB).", "File too large (max ~10 MB).");
+          }
+          if (!["application/pdf", "image/png", "image/jpeg", "image/webp"].includes(mime)) {
+            return err(400, CORS, "unsupported file", "Tipo de archivo no soportado.", "Unsupported file type.");
           }
         }
-        return json({ ok: false, error: "gemini error", detalle: lastErr }, 502, CORS);
+        const parteDoc = texto
+          ? { text: "INVOICE TEXT (extracted from the PDF; each line is one printed row, columns separated by spaces):\n" + texto }
+          : { inline_data: { mime_type: mime, data: pdf } };
+        const r = await leerFacturaIA(env, parteDoc);
+        if (r.ok) return json({ ok: true, data: r.data, model: r.model, ms: r.ms, cuadra: r.cuadra, suma: r.suma, total: r.total }, 200, CORS);
+        return json({ ok: false, error: "gemini error", detalle: r.error }, 502, CORS);
       }
 
       if (path !== "/state") return json({ error: "route not found" }, 404, CORS);
@@ -1572,6 +2256,7 @@ export default {
       if (req.method === "GET") {
         const row = await leerEstado(env, space);
         if (!row) return json({ data: null, rev: 0, updated_at: null }, 200, CORS);
+        if ((role === "admin" || role === "editor") && ctx && ctx.waitUntil) ctx.waitUntil(sembrarHist(env, space, row));   // v9 · v10: + editor
         return new Response(`{"data":${estadoParaCliente(env, who, row.dataStr)},"rev":${row.rev},"updated_at":${JSON.stringify(row.updated_at)}}`,
           { status: 200, headers: { "Content-Type": "application/json", ...CORS } });
       }
@@ -1599,6 +2284,7 @@ export default {
               return new Response(`{"ok":true,"rev":${curRev},"data":${estadoParaCliente(env, who, cur.dataStr)},"avisos":${JSON.stringify(c.avisos)}}`,
                 { status: 200, headers: { "Content-Type": "application/json", ...CORS } });
             }
+            marcarAutor(prev, c.m, who.u);   // v11
             const dataStr = JSON.stringify(c.m);
             const g = await guardarEstado(env, { space, dataStr, curRev, existe: true, who, meta,
               accion: "estado-vendedor", resumen: c.cambios.join(" | "), papelera: c.papelera });
@@ -1621,56 +2307,83 @@ export default {
         if (!validarEstructura(next)) {
           return err(400, CORS, "invalid state", "Los datos enviados están incompletos: no se guardó nada.", "The data sent is incomplete: nothing was saved.");
         }
-        const force = !!body.force;
-        const cur = await leerEstado(env, space);
-        const curRev = cur ? cur.rev : 0;
-        let prev = null;
-        if (cur) { try { prev = JSON.parse(cur.dataStr); } catch { prev = null; } }
-
-        if (!force && baseRev !== curRev) {
-          return new Response(`{"conflict":true,"rev":${curRev},"data":${cur ? cur.dataStr : "null"},"updated_at":${JSON.stringify(cur ? cur.updated_at : null)}}`,
+        const force = role === "editor" ? false : !!body.force;   // v10: el editor nunca fuerza
+        const conflicto409 = (curRev, curStr, updatedAt, conflictos) => {
+          const extra = conflictos && conflictos.length ? `,"conflictos":${JSON.stringify(conflictos)}` : "";
+          return new Response(`{"conflict":true,"rev":${curRev},"data":${curStr || "null"},"updated_at":${JSON.stringify(updatedAt || null)}${extra}}`,
             { status: 409, headers: { "Content-Type": "application/json", ...CORS } });
-        }
+        };
+        // v9: hasta 3 intentos (si otro guarda justo en el medio, se vuelve a leer y combinar)
+        for (let intento = 0; intento < 3; intento++) {
+          const cur = await leerEstado(env, space);
+          const curRev = cur ? cur.rev : 0;
+          let prev = null;
+          if (cur) { try { prev = JSON.parse(cur.dataStr); } catch { prev = null; } }
 
-        let avisos = [], cambiosRebase = [];
-        if (prev) {
-          if (!force) {
-            const bm = borradoMasivo(prev, next);
-            if (bm) {
-              return new Response(JSON.stringify({
-                error: "mass delete", conflict: true, rev: curRev, updated_at: cur.updated_at,
-                es: `Frené el guardado: se estaban borrando ${bm.idos} de ${bm.antes} ${bm.col}. Si es a propósito, elegí "sobrescribir el servidor" en Datos.`,
-                en: `Save blocked: ${bm.idos} of ${bm.antes} ${bm.col} were being deleted. If intended, choose "overwrite server" in Data.`
-              }).slice(0, -1) + `,"data":${cur.dataStr}}`, { status: 422, headers: { "Content-Type": "application/json", ...CORS } });
-            }
-          } else if (baseRev < curRev) {
-            const c = rebaseAdmin(env, prev, next, baseRev, curRev, who);
-            avisos = c.avisos; cambiosRebase = c.cambios;
+          // cada intento arranca de una copia limpia de lo que mandó el admin (al guardar se modifica)
+          const mio = intento === 0 ? next : JSON.parse(bodyTxt).data;
+          // v10 · EDITOR: sólo compras, productos y su stock. Se compara contra la versión en la que trabajó.
+          if (role === "editor") {
+            if (!prev) return err(403, CORS, "forbidden", "El perfil Editor no puede inicializar la base.", "The Editor profile can't initialize the database.");
+            const ref = baseRev === curRev ? prev : ((baseRev > 0 && baseRev < curRev) ? await leerHist(env, space, baseRev) : null);
+            if (!ref) return conflicto409(curRev, cur && cur.dataStr, cur && cur.updated_at, null);
+            const pe = protegerEditor(ref, mio);
+            if (pe) return err(403, CORS, "editor", pe.es, pe.en);
+            // v11: sólo sus propias compras, salvo permiso del admin
+            if (!who.eo) { const aj = editorAjeno(ref, mio, who.u, ["compras", "ventas"]); if (aj) { const m = msgAjeno(aj); return err(403, CORS, "editor", m.es, m.en); } }
           }
-        }
+          let data = mio, combinado = null;
+          if (!force && baseRev !== curRev) {
+            // v9: la versión sobre la que trabajó este admin -> combinar sus cambios con los de los demás
+            const base = (prev && baseRev > 0 && baseRev < curRev) ? await leerHist(env, space, baseRev) : null;
+            if (!base) return conflicto409(curRev, cur && cur.dataStr, cur && cur.updated_at, null);
+            combinado = combinar3(base, mio, prev, { stores: storeIds(env) });
+            if (combinado.conflictos.length) return conflicto409(curRev, cur.dataStr, cur.updated_at, combinado.conflictos);
+            data = combinado.data;
+            if (mrgCanon(data) === mrgCanon(prev)) {   // lo mío ya estaba en el servidor: nada que guardar
+              return new Response(`{"ok":true,"rev":${curRev},"updated_at":${JSON.stringify(cur.updated_at)},"avisos":[],"data":${estadoParaCliente(env, who, cur.dataStr)}}`,
+                { status: 200, headers: { "Content-Type": "application/json", ...CORS } });
+            }
+          }
 
-        marcarRevs(prev, next, curRev + 1);
-        const papelera = prev ? borrados(prev, next) : [];
-        const dataStr = JSON.stringify(next);
-        const resumen = resumenCambios(prev, next) + (force ? " | FORZADO" : "") + (cambiosRebase.length ? " | " + cambiosRebase.join(", ") : "");
-        const g = await guardarEstado(env, { space, dataStr, curRev, existe: !!cur, who, meta,
-          accion: force ? "estado-admin-forzado" : "estado-admin", resumen, papelera });
-        if (g.grande) return errGrande(CORS);
-        if (!g.ok) {
-          const again = await leerEstado(env, space);
-          return new Response(`{"conflict":true,"rev":${again ? again.rev : 0},"data":${again ? again.dataStr : "null"},"updated_at":${JSON.stringify(again ? again.updated_at : null)}}`,
-            { status: 409, headers: { "Content-Type": "application/json", ...CORS } });
+          let avisos = combinado ? combinado.avisos.slice() : [], cambiosRebase = [];
+          if (prev) {
+            if (!force) {
+              const bm = borradoMasivo(prev, data);
+              if (bm) {
+                return new Response(JSON.stringify({
+                  error: "mass delete", conflict: true, rev: curRev, updated_at: cur.updated_at,
+                  es: `Frené el guardado: se estaban borrando ${bm.idos} de ${bm.antes} ${bm.col}. Si es a propósito, elegí "sobrescribir el servidor" en Datos.`,
+                  en: `Save blocked: ${bm.idos} of ${bm.antes} ${bm.col} were being deleted. If intended, choose "overwrite server" in Data.`
+                }).slice(0, -1) + `,"data":${cur.dataStr}}`, { status: 422, headers: { "Content-Type": "application/json", ...CORS } });
+              }
+            } else if (baseRev < curRev) {
+              const c = rebaseAdmin(env, prev, data, baseRev, curRev, who);
+              avisos = c.avisos; cambiosRebase = c.cambios;
+            }
+          }
+
+          marcarAutor(prev, data, who.u);   // v11
+          marcarRevs(prev, data, curRev + 1);
+          const papelera = prev ? borrados(prev, data) : [];
+          const dataStr = JSON.stringify(data);
+          const resumen = resumenCambios(prev, data) + (force ? " | FORZADO" : "") + (combinado ? ` | COMBINADO (base ${baseRev} → ${curRev})` : "")
+            + (cambiosRebase.length ? " | " + cambiosRebase.join(", ") : "");
+          const g = await guardarEstado(env, { space, dataStr, curRev, existe: !!cur, who, meta,
+            accion: force ? "estado-admin-forzado" : (combinado ? "estado-admin-combinado" : "estado-admin"), resumen, papelera });
+          if (g.grande) return errGrande(CORS);
+          if (!g.ok) continue;   // alguien guardó justo en el medio: volvemos a leer y combinar
+          if (ctx && ctx.waitUntil) ctx.waitUntil(backupVersion(env, space, g.newRev, dataStr, g.sha));
+          const out = { ok: true, rev: g.newRev, updated_at: g.now, avisos };
+          if (g.pct >= 50) out.avisoTamano = g.pct;   // % de capacidad usada
+          // Si hubo rebase o combinación, el admin tiene que recibir la versión final.
+          if (cambiosRebase.length || combinado) {
+            return new Response(JSON.stringify(out).slice(0, -1) + `,"data":${dataStr}}`, { status: 200, headers: { "Content-Type": "application/json", ...CORS } });
+          }
+          return json(out, 200, CORS);
         }
-        if (ctx && ctx.waitUntil) ctx.waitUntil(backupVersion(env, space, g.newRev, dataStr, g.sha));
-        const out = { ok: true, rev: g.newRev, updated_at: g.now, avisos };
-        if (g.pct >= 50) out.avisoTamano = g.pct;   // % de capacidad usada
-        // Si hubo rebase, el admin tiene que recibir la versión final (con las ventas rescatadas).
-        if (cambiosRebase.length) {
-          return new Response(JSON.stringify(out).slice(0, -1) + `,"data":${dataStr}}`, { status: 200, headers: { "Content-Type": "application/json", ...CORS } });
-        }
-        return json(out, 200, CORS);
+        return json({ error: "busy", es: "El servidor está ocupado, reintentá en unos segundos.", en: "Server busy, retry in a few seconds." }, 503, CORS);
       }
-
       return json({ error: "method not supported" }, 405, CORS);
 
     } catch (e) {
