@@ -13,7 +13,8 @@
    el mensaje {type:"SKIP_WAITING"} y ahí sí se activa y recarga. Así
    nadie pierde una carga a medias por un refresh sorpresa.
    ============================================================ */
-const CACHE = "mayor-stock-v152";   // v152: el Editor sólo edita lo que cargó (permiso 'editar lo de otros' por usuario); cada compra/venta guarda quién la cargó; importar factura respeta el idioma (otro idioma = otro SKU) y pide el idioma del producto nuevo
+const CACHE = "mayor-stock-v153";   // v153: Stock del grupo — "Ver como: Unidades / Cajas" (tabla, totales, orden y catálogo PDF siguen la vista elegida)
+//   // v152: el Editor sólo edita lo que cargó (permiso 'editar lo de otros' por usuario); cada compra/venta guarda quién la cargó; importar factura respeta el idioma (otro idioma = otro SKU) y pide el idioma del producto nuevo
 //   // v151: gráficos de barras sin etiquetas pisadas y Margen % alineado por semana; la página ya no se estira a lo ancho en pantallas medianas; simulador del plan en celular; cliente sin nombre repetido
 //   // v150: la app pasa a llamarse Prince Collections (barra, login, pestaña, ícono instalado, Excel)
 //   // v149: el cartel de actualizar aparece siempre (también tras Ctrl+F5 o si el SW viejo quedó trabado)
