@@ -10,6 +10,9 @@
    pide el stock al servidor de la otra empresa. Sin costos ni precios.
    Módulo idéntico en Prince y Select (salvo el SKU en la fila, que en Select sólo ve el admin).
    v-catálogo: botón "Descargar catálogo" (PDF por juego, sin nombres de empresa).
+   v-cajas: "Ver como: Unidades / Cajas" (mismo interruptor que Panel y Productos). En cajas,
+   cada producto se divide por sus unidades por caja; la tabla, los totales, el orden y el
+   catálogo PDF siguen la vista elegida.
    ============================================================ */
 (function(){
   const EN = {
@@ -34,7 +37,10 @@
     "gr.cat.product":"PRODUCT", "gr.cat.units":"AVAILABLE", "gr.cat.other":"Other",
     "gr.cat.note":"Quantities available when this catalog was downloaded. Subject to confirmation at the time of the order.",
     "gr.cat.page":"Page {p} of {n}", "gr.cat.empty":"No products with available stock to put in the catalog", "gr.cat.done":"Catalog downloaded ({n} products)",
-    "gr.cat.err":"Couldn't generate the PDF (no internet?)", "gr.cat.file":"catalog", "gr.cat.cont":"(cont.)"
+    "gr.cat.err":"Couldn't generate the PDF (no internet?)", "gr.cat.file":"catalog", "gr.cat.cont":"(cont.)",
+    "gr.view.tip":"Cases: each product is divided by its units per case (the one set on the product).",
+    "gr.cell.tip":"= {u} units ({n} per case)", "gr.th.incases":"cases",
+    "gr.cat.sum.c":"{n} products · {u} cases", "gr.cat.units.c":"AVAILABLE (CASES)"
   };
   const ES = {
     "nav.grupo":"Stock del grupo", "gr.title":"Stock del grupo",
@@ -58,7 +64,10 @@
     "gr.cat.product":"PRODUCTO", "gr.cat.units":"DISPONIBLE", "gr.cat.other":"Otros",
     "gr.cat.note":"Cantidades disponibles al momento de descargar el catálogo. Sujetas a confirmación al hacer el pedido.",
     "gr.cat.page":"Página {p} de {n}", "gr.cat.empty":"No hay productos con stock disponible para el catálogo", "gr.cat.done":"Catálogo descargado ({n} productos)",
-    "gr.cat.err":"No se pudo generar el PDF (¿sin internet?)", "gr.cat.file":"catalogo", "gr.cat.cont":"(cont.)"
+    "gr.cat.err":"No se pudo generar el PDF (¿sin internet?)", "gr.cat.file":"catalogo", "gr.cat.cont":"(cont.)",
+    "gr.view.tip":"Cajas: cada producto se divide por sus unidades por caja (las cargadas en el producto).",
+    "gr.cell.tip":"= {u} unidades ({n} por caja)", "gr.th.incases":"cajas",
+    "gr.cat.sum.c":"{n} productos · {u} cajas", "gr.cat.units.c":"DISPONIBLE (CAJAS)"
   };
   try{ Object.assign(I18N.en, EN); Object.assign(I18N.es, ES); }catch(e){ console.warn("grupo i18n", e); }
 })();
@@ -89,6 +98,36 @@ function isoLocalGr(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padSta
 
 function _grNorm(s){ return String(s||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-z0-9]+/g," ").trim(); }
 
+/* ---- Ver como: Unidades / Cajas (v-cajas) ----
+   Usa el mismo interruptor global que Panel y Productos (stockView), así la vista elegida
+   se mantiene al cambiar de pantalla. El stock viaja siempre en UNIDADES; para pasarlo a
+   cajas se divide por las "unidades por caja" del producto, que salen (en este orden) de:
+     1) lo que mande el servidor en el producto (campo upc), si algún día lo manda;
+     2) el producto de ESTA app con el mismo código o el mismo nombre (su ficha);
+     3) otro producto del mismo grupo que sí lo tenga (es el mismo producto);
+     4) el valor por defecto del juego (Pokémon 6, One Piece 12, ...). */
+function _grEnCajas(){ try{ return typeof stockView!=="undefined" && stockView==="cases"; }catch(e){ return false; } }
+function _grFmt(n){   // cantidad en la vista activa: cajas con hasta 2 decimales, unidades como siempre
+  if(!_grEnCajas()) return qty(n);
+  const v = Math.round((+n||0)*100)/100;
+  try{ return nf0.format(v); }catch(e){ return String(v); }
+}
+function _grUpcLocal(){   // código / nombre -> unidades por caja, según los productos de esta app
+  const m = { c:new Map(), n:new Map() };
+  try{
+    ((typeof db!=="undefined" && db && db.productos) || []).forEach(p=>{
+      if(!p) return;
+      const u = (typeof unitsPerCase==="function") ? unitsPerCase(p) : (+p.boxesPorCase||0);
+      if(!(u>0)) return;
+      const asoc = Array.isArray(p.skusAsoc) ? p.skusAsoc.map(x=> x && x.sku) : [];
+      [p.sku, ...asoc].forEach(c=>{ c = String(c||"").trim().toLowerCase(); if(c && !m.c.has(c)) m.c.set(c, u); });
+      const nn = _grNorm(p.nombre); if(nn && !m.n.has(nn)) m.n.set(nn, u);
+    });
+  }catch(e){}
+  return m;
+}
+function _grUpcDefault(juego){ try{ const u = (typeof boxesCaseDefault==="function") ? boxesCaseDefault(juego) : 6; return u>0 ? u : 1; }catch(e){ return 6; } }
+
 /* Junta los productos de todas las apps: mismo código (SKU o asociado) o mismo nombre. */
 /* Agrupa los productos de las dos empresas (v91).
    Dos productos son "el mismo" si comparten algún código (SKU o código de proveedor) o tienen
@@ -101,6 +140,14 @@ function grupoFilas(apps){
   apps.forEach((a, ai)=> (a.productos||[]).forEach(p=> items.push({ ai, p,
     cods: [...new Set((p.codigos||[]).map(c=>String(c).trim().toLowerCase()).filter(Boolean))],
     n: _grNorm(p.nombre) })));
+  // unidades por caja conocidas de cada producto (0 = todavía no se sabe; se resuelve por grupo)
+  const upcLocal = _grUpcLocal();
+  items.forEach(it=>{
+    let u = +it.p.upc > 0 ? +it.p.upc : 0;
+    if(!u){ const c = it.cods.find(c=> upcLocal.c.has(c)); if(c) u = upcLocal.c.get(c); }
+    if(!u && it.n && upcLocal.n.has(it.n)) u = upcLocal.n.get(it.n);
+    it.upc = u;
+  });
   // unión de conjuntos (con compresión de caminos)
   const padre = items.map((_,i)=>i);
   const raiz = i=>{ while(padre[i]!==i){ padre[i]=padre[padre[i]]; i=padre[i]; } return i; };
@@ -117,16 +164,22 @@ function grupoFilas(apps){
   grupos.forEach(lista=>{
     // nombre a mostrar: el de la propia empresa si está; si no, el primero
     const ref = lista.find(it=> it.ai===0) || lista[0];
-    const f = { nombre:ref.p.nombre, sku:ref.p.sku, juego:"", idioma:ref.p.idioma, codigos:new Set(), idiomas:new Set(), stock:{}, transito:0, apps:new Set() };
-    lista.forEach(({ai,p,cods})=>{
+    const f = { nombre:ref.p.nombre, sku:ref.p.sku, juego:"", idioma:ref.p.idioma, codigos:new Set(), idiomas:new Set(), stock:{}, transito:0, apps:new Set(),
+                cajas:{}, transitoC:0, totalC:0, upc:0 };   // lo mismo, en cajas
+    // unidades por caja del grupo: la de la propia empresa si se conoce; si no, la de cualquiera del grupo
+    const upcG = (lista.find(it=> it.ai===0 && it.upc>0) || lista.find(it=> it.upc>0) || {}).upc || 0;
+    lista.forEach(({ai,p,cods,upc})=>{
+      const u = upc || upcG || _grUpcDefault(p.juego);
+      if(!f.upc || ai===0) f.upc = u;                  // para el tooltip: la de la propia empresa si está
       cods.forEach(c=> f.codigos.add(c));
-      Object.keys(p.stock||{}).forEach(d=>{ const k=ai+":"+d; f.stock[k]=(f.stock[k]||0)+(+p.stock[d]||0); });
+      Object.keys(p.stock||{}).forEach(d=>{ const k=ai+":"+d, n=(+p.stock[d]||0); f.stock[k]=(f.stock[k]||0)+n; f.cajas[k]=(f.cajas[k]||0)+n/u; });
       if(p.idioma) f.idiomas.add(String(p.idioma));
-      f.transito += (+p.transito||0);
+      f.transito += (+p.transito||0); f.transitoC += (+p.transito||0)/u;
       f.apps.add(ai);
     });
     f.juego = lineaDe(f.nombre) || lista.map(it=>lineaDe(it.p.nombre)).find(Boolean) || lista.map(it=>it.p.juego).find(Boolean) || "";
     f.total = Object.values(f.stock).reduce((a,b)=>a+b,0);
+    f.totalC = Object.values(f.cajas).reduce((a,b)=>a+b,0);
     filas.push(f);
   });
   return filas.sort((a,b)=> String(a.nombre||"").localeCompare(String(b.nombre||""),"es",{numeric:true}));
@@ -178,6 +231,13 @@ function _grPintar(){
   const appsOk = apps.map((a,ai)=>({ai, nombre:(a&&a.app)||"—"})).filter(x=> apps[x.ai] && !apps[x.ai].error);
   const hayTr0 = filas.some(f=>f.transito>0);
   const lblIdi = v => (typeof langLabel==="function") ? langLabel(v) : v;
+  /* Vista activa (unidades / cajas): de acá salen las cantidades que se muestran, ordenan y suman.
+     Los filtros ("Con stock en…") miran siempre las unidades: hay stock o no hay. */
+  const enCajas = _grEnCajas();
+  const vS  = (f,k)=> enCajas ? (f.cajas[k]||0) : (f.stock[k]||0);
+  const vTr = f=> enCajas ? (f.transitoC||0) : (f.transito||0);
+  const vTo = f=> enCajas ? (f.totalC||0) : (f.total||0);
+  const tip = (f,u)=> enCajas ? ` title="${esc(t("gr.cell.tip",{u:qty(u), n:qty(f.upc||1)}))}"` : "";
   const q = _grNorm(_gr.q);
   filas = filas.filter(f=>{
     if(_gr.juego && f.juego!==_gr.juego) return false;
@@ -195,9 +255,9 @@ function _grPintar(){
     const dir = _gr.sd==="asc" ? 1 : -1;
     const val = f => _gr.sk==="nombre" ? String(f.nombre||"")
                   : _gr.sk==="juego"  ? String(f.juego||"")
-                  : _gr.sk==="__tr"   ? (f.transito||0)
-                  : _gr.sk==="total"  ? (f.total||0)
-                  : (f.stock[_gr.sk]||0);
+                  : _gr.sk==="__tr"   ? vTr(f)
+                  : _gr.sk==="total"  ? vTo(f)
+                  : vS(f,_gr.sk);
     filas.sort((a,b)=>{ const va=val(a), vb=val(b);
       const c = typeof va==="number" ? va-vb : va.localeCompare(vb,"es",{numeric:true,sensitivity:"base"});
       return dir*c || String(a.nombre||"").localeCompare(String(b.nombre||""),"es",{numeric:true}); });
@@ -209,7 +269,7 @@ function _grPintar(){
     return `<th class="sortable${r?" r":""}${on?(_gr.sd==="asc"?" sort-asc":" sort-desc"):""}" data-grsort="${esc(k)}" title="${esc(t("gr.sort.tip"))}" tabindex="0">${esc(label)}<span class="sarr">${arr}</span></th>`;
   };
   const opt = (v,l,cur)=>`<option value="${esc(v)}" ${v===cur?"selected":""}>${esc(l)}</option>`;
-  const tot = k => filas.reduce((a,f)=> a+(f.stock[k]||0), 0);
+  const tot = k => filas.reduce((a,f)=> a+vS(f,k), 0);
   const hayTr = filas.some(f=>f.transito>0);
   _gr.vistas = filas;   // lo que se ve (con filtros y orden): es lo que va al catálogo
   const cbt = document.getElementById("gr_cat"); if(cbt) cbt.disabled = false;
@@ -218,9 +278,9 @@ function _grPintar(){
     return `<tr>
       <td><b>${esc(f.nombre||"—")}</b>${cods.length?`<div class="hint" style="font-size:12px" title="${esc(t("gr.match.tip",{c:cods.join(", ")}))}">${cods.slice(0,3).map(c=>`<span class="sku">${esc(c.toUpperCase())}</span>`).join(" ")}${cods.length>3?" …":""}</div>`:""}</td>
       <td>${esc(f.juego||"—")}</td>
-      ${cols.map(c=>`<td class="r num">${f.stock[c.k]?qty(f.stock[c.k]):'<span style="color:var(--muted)">—</span>'}</td>`).join("")}
-      ${hayTr?`<td class="r num">${f.transito?qty(f.transito):'<span style="color:var(--muted)">—</span>'}</td>`:""}
-      <td class="r num"><b>${qty(f.total)}</b></td>
+      ${cols.map(c=>`<td class="r num"${f.stock[c.k]?tip(f,f.stock[c.k]):""}>${f.stock[c.k]?_grFmt(vS(f,c.k)):'<span style="color:var(--muted)">—</span>'}</td>`).join("")}
+      ${hayTr?`<td class="r num"${f.transito?tip(f,f.transito):""}>${f.transito?_grFmt(vTr(f)):'<span style="color:var(--muted)">—</span>'}</td>`:""}
+      <td class="r num"${tip(f,f.total)}><b>${_grFmt(vTo(f))}</b></td>
     </tr>`;
   }).join("");
   const avisoViejo = (_gr.estado==="error" && _gr.error) ? `<div class="banner warn" style="white-space:normal">${t("gr.stale",{e:esc(_gr.error),t:_grHora(_gr.hora)})}</div>` : "";
@@ -233,18 +293,29 @@ function _grPintar(){
         <select class="inp" id="gr_dep" style="max-width:190px" title="${t("gr.f.dep")}">${opt("",t("gr.f.dep.all"),_gr.dep)}${cols.map(c=>opt(c.k,c.nombre,_gr.dep)).join("")}${hayTr0?opt("__tr",t("gr.f.dep.tr"),_gr.dep):""}</select>
         ${idiomas.length?`<select class="inp" id="gr_idioma" style="max-width:170px" title="${t("gr.f.lang")}">${opt("",t("gr.f.lang.all"),_gr.idioma)}${idiomas.map(i=>opt(i,lblIdi(i),_gr.idioma)).join("")}</select>`:""}
         ${hayFiltro?`<button class="btn" id="gr_clear" type="button">${t("gr.f.clear")}</button>`:""}
+        <div class="gr-viewas" role="group" aria-label="${esc(t("bar.viewas"))}" title="${esc(t("gr.view.tip"))}" style="display:flex;gap:8px;align-items:center;flex-wrap:nowrap">
+          <span style="font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-right:4px;white-space:nowrap">${t("bar.viewas")}</span>
+          <button type="button" class="chip-btn ${enCajas?"":"on"}" data-grview="units" aria-pressed="${!enCajas}">${t("bar.units")}</button>
+          <button type="button" class="chip-btn ${enCajas?"on":""}" data-grview="cases" aria-pressed="${enCajas}">${t("bar.cases")}</button>
+        </div>
         <span class="hint" style="font-size:12px;margin-left:auto">${t("gr.count",{n:filas.length})}${_gr.hora?" · "+t("gr.updated",{t:_grHora(_gr.hora)}):""}${_gr.estado==="cargando"?` · <span style="color:var(--accent-ink,var(--accent))">${t("gr.refreshing")}</span>`:""}</span>
       </div>
       <div class="table-scroll"><table>
-        <thead><tr>${th("nombre",t("gr.th.product"))}${th("juego",t("gr.th.game"))}${cols.map(c=>th(c.k,c.nombre,true)).join("")}${hayTr?th("__tr",t("gr.th.transit"),true):""}${th("total",t("gr.th.total"),true)}</tr></thead>
+        <thead><tr>${th("nombre",t("gr.th.product"))}${th("juego",t("gr.th.game"))}${cols.map(c=>th(c.k,c.nombre,true)).join("")}${hayTr?th("__tr",t("gr.th.transit"),true):""}${th("total",t("gr.th.total")+(enCajas?" ("+t("gr.th.incases")+")":""),true)}</tr></thead>
         <tbody>${rows || `<tr><td colspan="${cols.length+3+(hayTr?1:0)}" style="text-align:center;color:var(--muted);padding:18px">${t("gr.empty")}</td></tr>`}</tbody>
-        ${filas.length?`<tfoot><tr><td colspan="2"><b>Total</b></td>${cols.map(c=>`<td class="r num"><b>${qty(tot(c.k))}</b></td>`).join("")}${hayTr?`<td class="r num"><b>${qty(filas.reduce((a,f)=>a+f.transito,0))}</b></td>`:""}<td class="r num"><b>${qty(filas.reduce((a,f)=>a+f.total,0))}</b></td></tr></tfoot>`:""}
+        ${filas.length?`<tfoot><tr><td colspan="2"><b>Total</b></td>${cols.map(c=>`<td class="r num"><b>${_grFmt(tot(c.k))}</b></td>`).join("")}${hayTr?`<td class="r num"><b>${_grFmt(filas.reduce((a,f)=>a+vTr(f),0))}</b></td>`:""}<td class="r num"><b>${_grFmt(filas.reduce((a,f)=>a+vTo(f),0))}</b></td></tr></tfoot>`:""}
       </table></div>
     </div>`;
   const qi=document.getElementById("gr_q");
   if(qi){ qi.oninput=()=>{ _gr.q=qi.value; const pos=qi.selectionStart; _grPintar(); const n=document.getElementById("gr_q"); if(n){ n.focus(); try{ n.setSelectionRange(pos,pos); }catch(e){} } }; }
   [["gr_juego","juego"],["gr_emp","emp"],["gr_dep","dep"],["gr_idioma","idioma"]].forEach(([id,k])=>{
     const el=document.getElementById(id); if(el) el.onchange=()=>{ _gr[k]=el.value; _grPintar(); };
+  });
+  /* Ver como: cambia la vista global (la misma de Panel y Productos) y repinta sin volver a pedir datos */
+  host.querySelectorAll("[data-grview]").forEach(b=> b.onclick = ()=>{
+    const v = b.dataset.grview==="cases" ? "cases" : "units";
+    try{ if(stockView===v) return; stockView = v; }catch(e){ return; }
+    _grPintar();
   });
   const cl=document.getElementById("gr_clear"); if(cl) cl.onclick=()=>{ Object.assign(_gr,{q:"",juego:"",emp:"",dep:"",idioma:"",sk:"",sd:""}); _grPintar(); };
   /* Encabezados: 1er toque ordena, 2do invierte, 3ro saca el orden */
@@ -262,7 +333,8 @@ function _grPintar(){
 /* ============================================================
    CATÁLOGO PDF del stock del grupo
    Producto + cantidad disponible (suma de depósitos, sin tránsito), dividido
-   por juego. Toma lo que se ve con los filtros puestos. NO lleva nombres de
+   por juego. Toma lo que se ve con los filtros puestos y la vista elegida
+   (unidades o cajas). NO lleva nombres de
    empresa ni de depósito, códigos, costos ni precios: es para mandar a clientes.
    Mismo diseño que el catálogo de productos (banda de color, filas alternadas,
    pie con página), con el color de la app.
@@ -293,8 +365,10 @@ function grupoCatalogoPDF(){
   filas.forEach(f=>{ const j = (f.juego && f.juego!=="—") ? f.juego : otros; (grupos[j] = grupos[j] || []).push(f); });
   const juegos = Object.keys(grupos).sort((a,b)=> a===otros ? 1 : b===otros ? -1 : a.localeCompare(b,"es",{sensitivity:"base"}));
   juegos.forEach(j=> grupos[j].sort((a,b)=> _grTxt(a.nombre).localeCompare(_grTxt(b.nombre),"es",{numeric:true,sensitivity:"base"})));
-  const totU = filas.reduce((a,f)=> a+(f.total||0), 0);
-  const nfmt = n=> (typeof qty==="function") ? qty(n) : String(n);
+  const enCajas = _grEnCajas();                       // el catálogo sale en la vista que se está mirando
+  const cant = f=> enCajas ? (f.totalC||0) : (f.total||0);
+  const totU = filas.reduce((a,f)=> a+cant(f), 0);
+  const nfmt = n=> _grFmt(n);
 
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit:"pt", format:"letter" });
@@ -311,7 +385,7 @@ function grupoCatalogoPDF(){
   doc.setFont("helvetica","normal"); doc.setFontSize(9.5);
   doc.text(_grTxt(t("gr.cat.sub",{d:hoy})), M, 58);
   doc.setFont("helvetica","bold"); doc.setFontSize(10);
-  doc.text(_grTxt(t("gr.cat.sum",{n:filas.length, u:nfmt(totU)})), W-M, 40, {align:"right"});
+  doc.text(_grTxt(t(enCajas?"gr.cat.sum.c":"gr.cat.sum",{n:filas.length, u:nfmt(totU)})), W-M, 40, {align:"right"});
 
   let y = 108;
   ink(MUT); doc.setFont("helvetica","normal"); doc.setFontSize(8.5);
@@ -320,7 +394,7 @@ function grupoCatalogoPDF(){
   const xQ = W-M-8, wName = W-2*M-110, LIM = H-54;
   const cabecera = (yy)=>{   // títulos de columna
     doc.setFont("helvetica","bold"); doc.setFontSize(7.5); ink(MUT);
-    doc.text(_grTxt(t("gr.cat.product")), M+8, yy); doc.text(_grTxt(t("gr.cat.units")), xQ, yy, {align:"right"});
+    doc.text(_grTxt(t("gr.cat.product")), M+8, yy); doc.text(_grTxt(t(enCajas?"gr.cat.units.c":"gr.cat.units")), xQ, yy, {align:"right"});
     doc.setDrawColor(LINE[0],LINE[1],LINE[2]); doc.line(M, yy+5, W-M, yy+5);
     return yy + 18;
   };
@@ -334,7 +408,7 @@ function grupoCatalogoPDF(){
   };
   y = cabecera(y);
   juegos.forEach(j=>{
-    const lista = grupos[j], sub = lista.reduce((a,f)=> a+(f.total||0), 0);
+    const lista = grupos[j], sub = lista.reduce((a,f)=> a+cant(f), 0);
     if(y + 22 + 20 > LIM){ doc.addPage(); y = 52; y = cabecera(y); }
     tituloJuego(j, sub, false);
     let zebra = false;
@@ -346,7 +420,7 @@ function grupoCatalogoPDF(){
       if(zebra){ doc.setFillColor(ZEBRA[0],ZEBRA[1],ZEBRA[2]); doc.rect(M, y-12, W-2*M, rowH, "F"); }
       zebra = !zebra;
       ink(INK); doc.text(ls, M+10, y+1);
-      doc.setFont("helvetica","bold"); doc.text(_grTxt(nfmt(f.total)), xQ, y+1, {align:"right"});
+      doc.setFont("helvetica","bold"); doc.text(_grTxt(nfmt(cant(f))), xQ, y+1, {align:"right"});
       y += rowH;
     });
     y += 8;
