@@ -286,19 +286,22 @@ function _grPintar(){
   const avisoViejo = (_gr.estado==="error" && _gr.error) ? `<div class="banner warn" style="white-space:normal">${t("gr.stale",{e:esc(_gr.error),t:_grHora(_gr.hora)})}</div>` : "";
   host.innerHTML = `${avisoViejo}${avisos}
     <div class="panel">
-      <div class="filtros" style="display:flex;gap:8px;flex-wrap:wrap;padding:12px 16px;align-items:center">
-        <input class="inp" id="gr_q" placeholder="${t("gr.ph.search")}" value="${esc(_gr.q)}" style="flex:1 1 220px">
-        <select class="inp" id="gr_juego" style="max-width:200px" title="${t("gr.th.game")}"><option value="">${t("gr.allgames")}</option>${juegos.map(j=>`<option ${j===_gr.juego?"selected":""}>${esc(j)}</option>`).join("")}</select>
-        <select class="inp" id="gr_emp" style="max-width:190px" title="${t("gr.f.emp")}">${opt("",t("gr.f.emp.all"),_gr.emp)}${appsOk.length>1?opt("ambas",t("gr.f.emp.both"),_gr.emp)+appsOk.map(x=>opt(String(x.ai),t("gr.f.emp.only",{app:x.nombre}),_gr.emp)).join(""):""}</select>
-        <select class="inp" id="gr_dep" style="max-width:190px" title="${t("gr.f.dep")}">${opt("",t("gr.f.dep.all"),_gr.dep)}${cols.map(c=>opt(c.k,c.nombre,_gr.dep)).join("")}${hayTr0?opt("__tr",t("gr.f.dep.tr"),_gr.dep):""}</select>
-        ${idiomas.length?`<select class="inp" id="gr_idioma" style="max-width:170px" title="${t("gr.f.lang")}">${opt("",t("gr.f.lang.all"),_gr.idioma)}${idiomas.map(i=>opt(i,lblIdi(i),_gr.idioma)).join("")}</select>`:""}
-        ${hayFiltro?`<button class="btn" id="gr_clear" type="button">${t("gr.f.clear")}</button>`:""}
-        <div class="gr-viewas" role="group" aria-label="${esc(t("bar.viewas"))}" title="${esc(t("gr.view.tip"))}" style="display:flex;gap:8px;align-items:center;flex-wrap:nowrap">
-          <span style="font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-right:4px;white-space:nowrap">${t("bar.viewas")}</span>
+      <div class="phead" style="flex-wrap:wrap;row-gap:10px">
+        <h3 style="white-space:nowrap">${t("gr.count",{n:filas.length})}</h3>
+        <span class="hint" style="flex:1 1 auto;min-width:0">${_gr.hora?t("gr.updated",{t:_grHora(_gr.hora)}):""}${_gr.estado==="cargando"?`${_gr.hora?" · ":""}<span style="color:var(--accent-ink,var(--accent))">${t("gr.refreshing")}</span>`:""}</span>
+        <div class="sb-viewas gr-viewas" role="group" aria-label="${esc(t("bar.viewas"))}" title="${esc(t("gr.view.tip"))}" style="display:flex;gap:8px;align-items:center;flex-wrap:nowrap;margin-left:auto">
+          <span class="sb-label" style="font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-right:4px;white-space:nowrap">${t("bar.viewas")}</span>
           <button type="button" class="chip-btn ${enCajas?"":"on"}" data-grview="units" aria-pressed="${!enCajas}">${t("bar.units")}</button>
           <button type="button" class="chip-btn ${enCajas?"on":""}" data-grview="cases" aria-pressed="${enCajas}">${t("bar.cases")}</button>
         </div>
-        <span class="hint" style="font-size:12px;margin-left:auto">${t("gr.count",{n:filas.length})}${_gr.hora?" · "+t("gr.updated",{t:_grHora(_gr.hora)}):""}${_gr.estado==="cargando"?` · <span style="color:var(--accent-ink,var(--accent))">${t("gr.refreshing")}</span>`:""}</span>
+      </div>
+      <div class="filtros" style="display:flex;gap:8px;flex-wrap:wrap;padding:12px 16px;align-items:center">
+        <input class="inp" id="gr_q" placeholder="${t("gr.ph.search")}" value="${esc(_gr.q)}" style="flex:2 1 240px;min-width:0">
+        <select class="inp" id="gr_juego" style="flex:1 1 150px;min-width:0" title="${t("gr.th.game")}"><option value="">${t("gr.allgames")}</option>${juegos.map(j=>`<option ${j===_gr.juego?"selected":""}>${esc(j)}</option>`).join("")}</select>
+        <select class="inp" id="gr_emp" style="flex:1 1 150px;min-width:0" title="${t("gr.f.emp")}">${opt("",t("gr.f.emp.all"),_gr.emp)}${appsOk.length>1?opt("ambas",t("gr.f.emp.both"),_gr.emp)+appsOk.map(x=>opt(String(x.ai),t("gr.f.emp.only",{app:x.nombre}),_gr.emp)).join(""):""}</select>
+        <select class="inp" id="gr_dep" style="flex:1 1 150px;min-width:0" title="${t("gr.f.dep")}">${opt("",t("gr.f.dep.all"),_gr.dep)}${cols.map(c=>opt(c.k,c.nombre,_gr.dep)).join("")}${hayTr0?opt("__tr",t("gr.f.dep.tr"),_gr.dep):""}</select>
+        ${idiomas.length?`<select class="inp" id="gr_idioma" style="flex:1 1 150px;min-width:0" title="${t("gr.f.lang")}">${opt("",t("gr.f.lang.all"),_gr.idioma)}${idiomas.map(i=>opt(i,lblIdi(i),_gr.idioma)).join("")}</select>`:""}
+        ${hayFiltro?`<button class="btn" id="gr_clear" type="button">${t("gr.f.clear")}</button>`:""}
       </div>
       <div class="table-scroll"><table>
         <thead><tr>${th("nombre",t("gr.th.product"))}${th("juego",t("gr.th.game"))}${cols.map(c=>th(c.k,c.nombre,true)).join("")}${hayTr?th("__tr",t("gr.th.transit"),true):""}${th("total",t("gr.th.total")+(enCajas?" ("+t("gr.th.incases")+")":""),true)}</tr></thead>
